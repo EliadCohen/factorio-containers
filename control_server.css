@@ -1,0 +1,29 @@
+DirectoryTree {
+    /* max-height: 8; */
+    height: 10;
+    width: 30;
+}
+
+#server_grid {
+    max-height: 8;
+    /* height: 3; */
+}
+
+#server_container {
+    max-height: 20;
+    height: 15;
+}
+
+#port_selection {
+    width: 15;
+    height: 3;
+}
+
+#file_selection {
+    color: $success;
+    max-width: 20;
+}
+
+#run_button {
+    color: $warning
+}
