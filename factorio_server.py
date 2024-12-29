@@ -1,5 +1,6 @@
 import podman
 from podman import PodmanClient
+from factorio_container import FactorioGame
 
 class FactorioServer():
     GAME_PREFIX = "factorio-"
@@ -33,7 +34,6 @@ class FactorioServer():
             except Exception as ex:
                 print(ex)
 
-    
     def __init__(self):
         self._client = PodmanClient(uri = "unix:///run/user/0/podman/podman.sock")
         self.games = []
@@ -52,14 +52,21 @@ class FactorioServer():
         games = []
         for con in conts:
             con_data = con.inspect()
-            for prt in con_data["NetworkSettings"]["Ports"].keys():
-                port = prt 
-                break
+            for key, value in con_data["NetworkSettings"]["Ports"].items():
+                if value:
+                    port = key
+                    break
             games.append(self.Game(container=con, container_id=con_data["Id"], game_name=con_data["Name"], game_port=port, game_path=con_data["Mounts"][0]["Source"]))
         return games
  
     def update_game_list(self):
         self.games = self._list_games()
+    
+    def create_game(self, name:str, port:int, savefile:str):
+        new_game = FactorioGame(name=name, savefile=savefile, port=port)
+        return new_game.create_game()
+
+
 
 if __name__ == "__main__":
     server_obj = FactorioServer()

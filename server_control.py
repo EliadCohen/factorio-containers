@@ -1,3 +1,6 @@
+from typing import Iterable
+from pathlib import Path
+
 from textual.widgets import Input, Switch, Label, Static, DirectoryTree, Button
 from textual.containers import ScrollableContainer, HorizontalGroup
 from textual.app import App
@@ -5,6 +8,11 @@ from textual.containers import ItemGrid
 from textual import on
 from factorio_server import FactorioServer
 from textual.reactive import reactive
+
+class FilteredDirectoryTree(DirectoryTree):
+    def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
+        return [path for path in paths if not path.name.startswith("_")]
+    
 
 class ServerEntry(Static):
     game_name = reactive("game_name")
@@ -26,18 +34,30 @@ class ServerEntry(Static):
 
 class NewServer(HorizontalGroup):
     def compose(self):
-        yield DirectoryTree("./saves/", id="filetree")
+        # add filter to DirectoryTree, remove anything not a zip file and zip files starting with an underscore
+        yield FilteredDirectoryTree("./saves/", id="filetree")
         yield Label("Select file", id="file_selection")
         yield Input(placeholder="port number to serve on", id="port_selection")
         yield Button("Run server", id="run_button")
         return super().compose()
     
-    @on(DirectoryTree.FileSelected, "#filetree")
-    def update_file_label(self, event: DirectoryTree.FileSelected):
-        print("HI")
+    @on(FilteredDirectoryTree.FileSelected, "#filetree")
+    def update_file_label(self, event: FilteredDirectoryTree.FileSelected):
+        # print("HI")
         lbl = self.query_one("#file_selection")
         lbl.update(event.path.name if event.path.is_file() else "select file")
-        print("Hello")
+        self.filepath = event.path
+        # print("Hello")
+
+    @on(Button.Pressed, "#run_button")
+    def new_server(self, event: Button.Pressed):
+        # Use the factorio_server.FactorioServer.create()
+        name = self.query_one("#file_selection").renderable.rstrip(".zip")
+        port = int(self.query_one("#port_selection").value)
+        # savefile = self.filepath.name
+
+        result = FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
+
 
 
 class ControlServer(App):
