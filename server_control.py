@@ -15,20 +15,19 @@ class FilteredDirectoryTree(DirectoryTree):
     
 
 class ServerEntry(Static):
-
+    game_name = reactive("game_name")
+    game_port = reactive("0")
+    game_active:bool = reactive(False, init=False)
+    
     def __init__(self, game_name, game_port, game_active, **kwargs):
         super().__init__(**kwargs)
-        self.game_name = reactive("game_name")
-        self.game_port = reactive("0")
-        self.game_active:bool = reactive(False, init=False)
-        self.game_name = game_name
-        self.game_port = game_port
-        self.game_active = game_active
+        self.set_reactive(ServerEntry.game_name, game_name)
+        self.set_reactive(ServerEntry.game_port, game_port)
+        self.set_reactive(ServerEntry.game_active, game_active)
         
-
     def watch_game_active(self):
-            switch = self.query_one("#server_active")
-            switch.value = self.game_active
+        switch = self.query_one("#server_active")
+        switch.value = self.game_active
 
     def update_server_fields(self, name, port, active):
         self.game_name = name
