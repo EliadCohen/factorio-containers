@@ -36,7 +36,7 @@ class FactorioServer():
 
     def __init__(self):
         self._client = PodmanClient(uri = "unix:///run/user/0/podman/podman.sock")
-        self.games = []
+        self.games = {}
         
     def start_game(self, game:Game):
         game.start()
@@ -49,14 +49,16 @@ class FactorioServer():
 
     def _list_games(self) -> list[Game]:
         conts = [con for con in (self._client.containers.list(all=True)) if con.name.startswith(self.GAME_PREFIX)]
-        games = []
+        games = {}
         for con in conts:
             con_data = con.inspect()
             for key, value in con_data["NetworkSettings"]["Ports"].items():
                 if value:
                     port = key
                     break
-            games.append(self.Game(container=con, container_id=con_data["Id"], game_name=con_data["Name"], game_port=port, game_path=con_data["Mounts"][0]["Source"]))
+            games[con_data["Name"]] = self.Game(container=con, container_id=con_data["Id"],
+                                              game_name=con_data["Name"],
+                                              game_port=port, game_path=con_data["Mounts"][0]["Source"])
         return games
  
     def update_game_list(self):
