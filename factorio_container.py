@@ -14,7 +14,7 @@ class FactorioGame():
 
     def __init__(self, name:str = SAVE, savefile:str = SAVE, port:int = PORT, adminlist:str = ADMINLIST, **kwargs):
         # Command is an array if you want to include args
-        self.command = f"""./bin/x64/factorio --start-server ./saves/{self.SAVE}.zip --server-settings ./saves/server-settings.json --server-adminlist {self.ADMINLIST} --port {self.PORT}""".split()
+        self.command = f"""./bin/x64/factorio --start-server ./saves/{savefile}.zip --server-settings ./saves/server-settings.json --server-adminlist {adminlist} --port {port}""".split()
         self.game_name = "factorio-" + name
         self.port = port
         self.adminlist = adminlist
