@@ -1,7 +1,6 @@
 from typing import Iterable
 from pathlib import Path
-
-from textual.widgets import Input, Switch, Label, Static, DirectoryTree, Button, Header, Footer, Rule
+from textual.widgets import Input, Switch, Label, DirectoryTree, Button, Header, Footer, Rule
 from textual.containers import ScrollableContainer, HorizontalGroup
 from textual.app import App
 from textual.containers import ItemGrid
@@ -13,8 +12,7 @@ class FilteredDirectoryTree(DirectoryTree):
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
         return [path for path in paths if not path.name.startswith("_")]
     
-
-class ServerEntry(Static):
+class ServerEntry(HorizontalGroup):
     game_name = reactive("game_name")
     game_port = reactive("0")
     game_active:bool = reactive(False, init=False)
@@ -35,12 +33,11 @@ class ServerEntry(Static):
         self.game_active = active
 
     def compose(self):
-        with ItemGrid(min_column_width=20, regular=True, id="server_grid"):
+        with ItemGrid(min_column_width=10, regular=True, id="server_grid"):
             yield Label(f"{self.game_name}", id="server_name")
             yield Label(f"{self.game_port}", id="server_port")
             yield Label(f"{self.game_active}", id="server_status")
             yield Switch(value=self.game_active, id="server_active")
-        return super().compose()
     
     @on(Switch.Changed, "#server_active")
     def toggle_game_state(self, event):
@@ -77,8 +74,6 @@ class NewServer(HorizontalGroup):
         # savefile = self.filepath.name
         result = FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
 
-
-
 class ControlServer(App):
     CSS_PATH="./control_server.css"
     BINDINGS = [("q", "quit", "Quit"),
@@ -94,7 +89,6 @@ class ControlServer(App):
     server = FactorioServer()
 
     def refresh_games(self):
-        # self.server = FactorioServer()
         self.server.update_game_list()
 
     def refresh_server_list(self):
@@ -108,23 +102,13 @@ class ControlServer(App):
                 entry.game_active = game.active_status
             else:
                 entry = ServerEntry(game_name=game.game_name, game_port=game.game_port, game_active=game.active_status, id=f"server-{game.game_name}")
-                # entry.game_name = game.game_name
-                # entry.game_port = game.game_port
-                # entry.game_active = game.active_status
                 scrollable_container.mount(entry)
 
     def compose(self):
         self.refresh_games()
         with ScrollableContainer(id="server_container"):
             for game in self.server.games.values():
-                # entry = ServerEntry(id=f"server-{game.game_name}")
-                # entry.game_name = game.game_name
-                # entry.game_port = game.game_port
-                # entry.game_active = game.active_status
                 yield ServerEntry(game_name=game.game_name, game_port=game.game_port, game_active=game.active_status, id=f"server-{game.game_name}")
-
-                # server = self.query_one(f"#server-{game.game_name}")
-                # server.update_server_fields(game.game_name, game.game_port, game.active_status)
         yield Rule()
         yield NewServer(id="newserver")
         yield Header()

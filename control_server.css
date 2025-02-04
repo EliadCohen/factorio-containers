@@ -1,17 +1,17 @@
 DirectoryTree {
-    /* max-height: 8; */
     height: 10;
     width: 30;
 }
 
-#server_grid {
-    max-height: 8;
-    /* height: 3; */
+ItemGrid#server_grid {
+    max-height: 7;
+    height: 5;
+    background: $boost;
+    border: round green;
 }
 
-#server_container {
-    max-height: 20;
-    height: 15;
+ScrollableContainer#server_container {
+    height: 28;
 }
 
 #port_selection {
