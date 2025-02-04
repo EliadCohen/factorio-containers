@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from typing import Iterable
 from pathlib import Path
 from textual.widgets import Input, Switch, Label, DirectoryTree, Button, Header, Footer, Rule
