@@ -1,0 +1,2 @@
+podman==5.2.0
+textual==1.0.0
