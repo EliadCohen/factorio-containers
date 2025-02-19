@@ -8,6 +8,7 @@ from textual.containers import ItemGrid
 from textual import on
 from factorio_server import FactorioServer
 from textual.reactive import reactive
+from textual.css import query
 
 class FilteredDirectoryTree(DirectoryTree):
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
@@ -74,6 +75,7 @@ class NewServer(HorizontalGroup):
         port = int(self.query_one("#port_selection").value)
         # savefile = self.filepath.name
         result = FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
+        self.app.refresh_server_list()
 
 class ControlServer(App):
     CSS_PATH="./control_server.css"
@@ -96,12 +98,13 @@ class ControlServer(App):
         scrollable_container = self.query_one("#server_container")
         self.refresh_games()
         for game in self.server.games.values():
-            entry = self.query_one(f"#server-{game.game_name}")
-            if entry:
-                entry.game_name = game.game_name
-                entry.game_port = game.game_port
-                entry.game_active = game.active_status
-            else:
+            try:
+                entry = self.query_one(f"#server-{game.game_name}")
+                if entry:
+                    entry.game_name = game.game_name
+                    entry.game_port = game.game_port
+                    entry.game_active = game.active_status
+            except query.NoMatches:
                 entry = ServerEntry(game_name=game.game_name, game_port=game.game_port, game_active=game.active_status, id=f"server-{game.game_name}")
                 scrollable_container.mount(entry)
 

@@ -10,7 +10,7 @@ class FactorioGame():
     PORT=34200
     SAVE="testo"
     ADMINLIST = "./data/server-adminlist.json"
-    IMAGE = "2f57cec80d67f7b80550faa2abff7ea44a72e5fe200d61e30fd186921975baa3"
+    IMAGE = "871db6fca36e"
 
     def __init__(self, name:str = SAVE, savefile:str = SAVE, port:int = PORT, adminlist:str = ADMINLIST, **kwargs):
         # Command is an array if you want to include args
@@ -29,7 +29,7 @@ class FactorioGame():
                 mounts=[
                     {
                         "type": "bind",
-                        "source": f"/root/projects/factorio-container/saves/{self.SAVE}/",
+                        "source": f"/root/projects/factorio-container/saves/{self.savefile}/",
                         "target": "/home/factorio/factorio/saves/",
                         "read_only": False,
                         "relabel": "Z",
