@@ -10,7 +10,7 @@ class FactorioGame():
     PORT=34200
     SAVE="testo"
     ADMINLIST = "./data/server-adminlist.json"
-    IMAGE = "871db6fca36e"
+    IMAGE = "localhost/factorio-headless:latest"
 
     def __init__(self, name:str = SAVE, savefile:str = SAVE, port:int = PORT, adminlist:str = ADMINLIST, **kwargs):
         # Command is an array if you want to include args
