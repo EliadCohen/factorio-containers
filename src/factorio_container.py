@@ -24,7 +24,8 @@ class FactorioGame():
         with PodmanClient(base_url=self.uri) as client:         
             self.game_container = client.containers.run(
                 image=self.IMAGE,
-                ports={f"{self.port}/udp": self.port},
+                network_mode="host",
+                labels={"factorio.port": str(self.port)},
                 detach=True,
                 mounts=[
                     {
@@ -42,6 +43,6 @@ class FactorioGame():
                 "name": self.game_container.attrs["Name"],
                 "id": self.game_container.attrs["Id"],
                 "running": self.game_container.attrs["State"]["Running"],
-                "ports": [port for port in self.game_container.attrs["HostConfig"]["PortBindings"]]
+                "port": self.port,
             }
             return result

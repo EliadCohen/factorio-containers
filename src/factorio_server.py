@@ -10,8 +10,12 @@ class FactorioServer():
             self._container = container
             self.container_id = container_id
             self.game_name = game_name
-            self.game_port = game_port
+            self.game_port = int(game_port)
             self.savepath = game_path
+
+        @property
+        def display_name(self) -> str:
+            return self.game_name.removeprefix(self.GAME_PREFIX)
         
         def __str__(self):
             return self.game_name
@@ -30,6 +34,9 @@ class FactorioServer():
         def delete(self):
             try:
                 self._container.stop()
+            except Exception:
+                pass
+            try:
                 self._container.remove()
             except Exception as ex:
                 print(ex)
@@ -52,10 +59,7 @@ class FactorioServer():
         games = {}
         for con in conts:
             con_data = con.inspect()
-            for key, value in con_data["NetworkSettings"]["Ports"].items():
-                if value:
-                    port = key
-                    break
+            port = int(con_data["Config"]["Labels"].get("factorio.port", 0))
             games[con_data["Name"]] = self.Game(container=con, container_id=con_data["Id"],
                                               game_name=con_data["Name"],
                                               game_port=port, game_path=con_data["Mounts"][0]["Source"])
@@ -65,7 +69,13 @@ class FactorioServer():
         self.games = self._list_games()
     
     def create_game(self, name:str, port:int, savefile:str):
-        new_game = FactorioGame(name=name, savefile=savefile, port=port)
+        existing = set(self.games.keys())
+        unique_name = name
+        suffix = 2
+        while (self.GAME_PREFIX + unique_name) in existing:
+            unique_name = f"{name}-{suffix}"
+            suffix += 1
+        new_game = FactorioGame(name=unique_name, savefile=savefile, port=port)
         return new_game.create_game()
 
 
