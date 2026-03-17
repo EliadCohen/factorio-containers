@@ -118,5 +118,8 @@ class ControlServer(App):
         yield Header()
         yield Footer()
 
-if __name__ == "__main__":
+def main():
     ControlServer().run()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+saves/*
+.venv
+*venv/
+__pycache__
+*.egg-info/
+test.py
+learning.py
+.vscode/
+.gitignore
