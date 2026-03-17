@@ -12,7 +12,7 @@ from textual.css import query
 
 class FilteredDirectoryTree(DirectoryTree):
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
-        return [path for path in paths if not path.name.startswith("_")]
+        return [path for path in paths if path.is_dir() or (path.suffix == ".zip" and not path.name.startswith("_"))]
     
 class ServerEntry(HorizontalGroup):
     game_name = reactive("game_name")
@@ -25,9 +25,14 @@ class ServerEntry(HorizontalGroup):
         self.set_reactive(ServerEntry.game_port, game_port)
         self.set_reactive(ServerEntry.game_active, game_active)
         
+    def _status_markup(self) -> str:
+        if self.game_active:
+            return "[bold orange1]Online[/bold orange1]"
+        return "[bold red]Offline[/bold red]"
+
     def watch_game_active(self):
-        switch = self.query_one("#server_active")
-        switch.value = self.game_active
+        self.query_one("#server_active", Switch).value = self.game_active
+        self.query_one("#server_status", Label).update(self._status_markup())
 
     def update_server_fields(self, name, port, active):
         self.game_name = name
@@ -36,11 +41,17 @@ class ServerEntry(HorizontalGroup):
 
     def compose(self):
         with ItemGrid(min_column_width=10, regular=True, id="server_grid"):
-            yield Label(f"{self.game_name}", id="server_name")
+            yield Label(self.game_name.removeprefix("factorio-"), id="server_name")
             yield Label(f"{self.game_port}", id="server_port")
-            yield Label(f"{self.game_active}", id="server_status")
+            yield Label(self._status_markup(), id="server_status", markup=True)
             yield Switch(value=self.game_active, id="server_active")
-    
+            yield Button("Delete", id="delete_button", variant="error")
+
+    @on(Button.Pressed, "#delete_button")
+    def delete_game(self, event: Button.Pressed):
+        self.app.server.games[self.game_name].delete()
+        self.app.refresh_server_list()
+
     @on(Switch.Changed, "#server_active")
     def toggle_game_state(self, event):
         if event.value != self.game_active:
@@ -52,29 +63,42 @@ class ServerEntry(HorizontalGroup):
                 self.game_active = event.value
 
 class NewServer(HorizontalGroup):
+    BASE_PORT = 34197
+
+    def _next_available_port(self) -> int:
+        in_use = {g.game_port for g in self.app.server.games.values()}
+        port = self.BASE_PORT
+        while port in in_use:
+            port += 1
+        return port
+
     def compose(self):
-        # add filter to DirectoryTree, remove anything not a zip file and zip files starting with an underscore
         yield FilteredDirectoryTree("./saves/", id="filetree")
         yield Label("Select file", id="file_selection")
         yield Input(placeholder="port number to serve on", id="port_selection")
         yield Button("Run server", id="run_button")
         return super().compose()
-    
+
+    def on_mount(self):
+        self.app.server.update_game_list()
+        self.query_one("#port_selection", Input).value = str(self._next_available_port())
+
     @on(FilteredDirectoryTree.FileSelected, "#filetree")
     def update_file_label(self, event: FilteredDirectoryTree.FileSelected):
-        # print("HI")
         lbl = self.query_one("#file_selection")
         lbl.update(event.path.name if event.path.is_file() else "select file")
         self.filepath = event.path
-        # print("Hello")
+        self.query_one("#port_selection", Input).value = str(self._next_available_port())
 
     @on(Button.Pressed, "#run_button")
     def new_server(self, event: Button.Pressed):
-        # Use the factorio_server.FactorioServer.create()
-        name = self.query_one("#file_selection").renderable.rstrip(".zip")
+        name = self.query_one("#file_selection").renderable.removesuffix(".zip")
         port = int(self.query_one("#port_selection").value)
-        # savefile = self.filepath.name
-        result = FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
+        in_use = {g.game_port for g in self.app.server.games.values()}
+        if port in in_use:
+            self.app.notify(f"Port {port} is already in use", severity="error")
+            return
+        FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
         self.app.refresh_server_list()
 
 class ControlServer(App):
@@ -91,12 +115,16 @@ class ControlServer(App):
 
     server = FactorioServer()
 
-    def refresh_games(self):
-        self.server.update_game_list()
+    def on_mount(self):
+        self.set_interval(5, self.refresh_server_list)
 
     def refresh_server_list(self):
+        self.server.update_game_list()
+        live_names = set(self.server.games.keys())
+        for entry in self.query(ServerEntry):
+            if entry.game_name not in live_names:
+                entry.remove()
         scrollable_container = self.query_one("#server_container")
-        self.refresh_games()
         for game in self.server.games.values():
             try:
                 entry = self.query_one(f"#server-{game.game_name}")
@@ -109,7 +137,7 @@ class ControlServer(App):
                 scrollable_container.mount(entry)
 
     def compose(self):
-        self.refresh_games()
+        self.server.update_game_list()
         with ScrollableContainer(id="server_container"):
             for game in self.server.games.values():
                 yield ServerEntry(game_name=game.game_name, game_port=game.game_port, game_active=game.active_status, id=f"server-{game.game_name}")
