@@ -27,3 +27,8 @@ ScrollableContainer#server_container {
 #run_button {
     color: $warning
 }
+
+#updatesection {
+    height: 5;
+    background: $boost;
+}

@@ -62,6 +62,28 @@ class ServerEntry(HorizontalGroup):
                 self.app.server.games[self.game_name].stop()
                 self.game_active = event.value
 
+class UpdateSection(HorizontalGroup):
+
+    def compose(self):
+        yield Button("Rebuild & Recreate All", id="rebuild_button", variant="error")
+
+    @on(Button.Pressed, "#rebuild_button")
+    def rebuild(self, event: Button.Pressed):
+        self.app.notify("Saving running games and rebuilding image...", title="Update")
+        self.run_worker(self._run_rebuild, thread=True, exit_on_error=False)
+
+    def _run_rebuild(self):
+        try:
+            result = self.app.server.rebuild_and_recreate()
+            self.app.notify(
+                f"Done: {len(result['recreated'])} recreated, {len(result['restarted'])} started.",
+                title="Update",
+            )
+            self.app.call_from_thread(self.app.refresh_server_list)
+        except Exception as e:
+            self.app.notify(f"Rebuild failed: {e}", title="Update", severity="error")
+
+
 class NewServer(HorizontalGroup):
     BASE_PORT = 34197
 
@@ -141,6 +163,8 @@ class ControlServer(App):
         with ScrollableContainer(id="server_container"):
             for game in self.server.games.values():
                 yield ServerEntry(game_name=game.game_name, game_port=game.game_port, game_active=game.active_status, id=f"server-{game.game_name}")
+        yield Rule()
+        yield UpdateSection(id="updatesection")
         yield Rule()
         yield NewServer(id="newserver")
         yield Header()

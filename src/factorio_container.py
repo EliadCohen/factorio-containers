@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 import shutil
 from podman import PodmanClient
 
@@ -18,8 +19,16 @@ class FactorioGame():
     TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "../Container/server-settings.json")
 
     def __init__(self, name:str = SAVE, savefile:str = SAVE, port:int = PORT, adminlist:str = ADMINLIST, **kwargs):
-        # Command is an array if you want to include args
-        self.command = f"""./bin/x64/factorio --start-server ./saves/{savefile}.zip --server-settings ./saves/server-settings.json --server-adminlist {adminlist} --port {port}""".split()
+        self.rcon_port = port + 1000
+        self.rcon_password = secrets.token_hex(8)
+        self.command = (
+            f"./bin/x64/factorio --start-server ./saves/{savefile}.zip"
+            f" --server-settings ./saves/server-settings.json"
+            f" --server-adminlist {adminlist}"
+            f" --port {port}"
+            f" --rcon-port {self.rcon_port}"
+            f" --rcon-password {self.rcon_password}"
+        ).split()
         self.name = name
         self.game_name = "factorio-" + name
         self.port = port
@@ -49,7 +58,11 @@ class FactorioGame():
             self.game_container = client.containers.run(
                 image=self.IMAGE,
                 network_mode="host",
-                labels={"factorio.port": str(self.port)},
+                labels={
+                    "factorio.port": str(self.port),
+                    "factorio.rcon-port": str(self.rcon_port),
+                    "factorio.rcon-password": self.rcon_password,
+                },
                 detach=True,
                 mounts=[
                     {
