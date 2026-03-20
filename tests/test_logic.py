@@ -663,7 +663,7 @@ class TestPlayerCount:
         with patch("factorio_server.send_command") as mock_cmd:
             mock_cmd.return_value = "0\n"
             game.player_count()
-        assert "/c rcon.print(#game.connected_players)" in mock_cmd.call_args[0]
+        assert "/silent-command rcon.print(#game.connected_players)" in mock_cmd.call_args[0]
 
     def test_returns_none_when_rcon_port_zero(self):
         """rcon_port=0 signals no RCON configured; must return None without connecting."""

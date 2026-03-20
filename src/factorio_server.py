@@ -146,7 +146,7 @@ class FactorioServer():
             try:
                 response = send_command(
                     "127.0.0.1", self.rcon_port, self.rcon_password,
-                    "/c rcon.print(#game.connected_players)",
+                    "/silent-command rcon.print(#game.connected_players)",
                     timeout=3,  # short timeout: called on every TUI refresh
                 )
                 return int(response.strip())
