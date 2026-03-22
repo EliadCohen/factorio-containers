@@ -111,7 +111,7 @@ class SatisfactoryAPIClient:
             self._base,
             params={"function": function},
             headers=per_request_headers or None,
-            json={"data": data or {}},
+            json={"function": function, "data": data or {}},
             timeout=5,
         )
         if not resp.ok:
@@ -135,7 +135,7 @@ class SatisfactoryAPIClient:
             resp = self._session.post(
                 self._base,
                 params={"function": "HealthCheck"},
-                json={"data": {"clientCustomData": ""}},
+                json={"function": "HealthCheck", "data": {"clientCustomData": ""}},
                 timeout=3,
             )
             return resp.status_code == 200
@@ -153,7 +153,7 @@ class SatisfactoryAPIClient:
             resp = self._session.post(
                 self._base,
                 params={"function": "HealthCheck"},
-                json={"data": {"clientCustomData": ""}},
+                json={"function": "HealthCheck", "data": {"clientCustomData": ""}},
                 timeout=3,
             )
             if resp.status_code == 200:
