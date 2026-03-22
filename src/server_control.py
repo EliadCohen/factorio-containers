@@ -198,7 +198,7 @@ class ServerEntry(HorizontalGroup):
         """
         if self._driver:
             self._driver.games[self.game_name].delete()
-            self.ancestor(GameTab).refresh_game_list()
+            self.query_ancestor(GameTab).refresh_game_list()
         else:
             # Fallback: reach driver via app (legacy path)
             self.app.server.games[self.game_name].delete()
@@ -251,7 +251,9 @@ class UpdateSection(HorizontalGroup):
 
     def compose(self):
         """Yield the rebuild button."""
-        yield Button("Rebuild & Recreate All", id="rebuild_button", variant="error")
+        btn = Button("Rebuild", id="rebuild_button", variant="error")
+        btn.tooltip = "Save running games, rebuild the container image, and recreate all containers for this game"
+        yield btn
 
     @on(Button.Pressed, "#rebuild_button")
     def rebuild(self, event: Button.Pressed):
@@ -289,13 +291,16 @@ class UpdateSection(HorizontalGroup):
                 result = self._driver.rebuild_and_recreate()
             else:
                 result = self.app.server.rebuild_and_recreate()
+            recreated = len(result["recreated"])
+            restarted = len(result["restarted"])
             self.app.notify(
-                f"Done: {len(result['recreated'])} recreated, {len(result['restarted'])} started.",
-                title="Update",
+                f"Image built. {recreated} server{'s' if recreated != 1 else ''} recreated"
+                + (f", {restarted} restarted." if restarted else "."),
+                title="Rebuild complete",
             )
             # Schedule TUI refresh on the event loop.
             if self._driver:
-                self.app.call_from_thread(self.ancestor(GameTab).refresh_game_list)
+                self.app.call_from_thread(self.query_ancestor(GameTab).refresh_game_list)
             else:
                 self.app.call_from_thread(self.app.refresh_server_list)
         except Exception as e:
@@ -337,11 +342,14 @@ class NewServer(HorizontalGroup):
         """
         if self._driver and not self._driver.supports_save_picker():
             yield Input(placeholder="server name", id="name_input")
+            yield Input(placeholder="port", id="port_selection")
+            yield Button("Run server", id="run_button")
         else:
             yield FilteredDirectoryTree("./saves/", id="filetree")
-            yield Label("Select file", id="file_selection")
-        yield Input(placeholder="port number to serve on", id="port_selection")
-        yield Button("Run server", id="run_button")
+            with Vertical(id="newserver_controls"):
+                yield Label("Select file", id="file_selection")
+                yield Input(placeholder="port", id="port_selection")
+                yield Button("Run server", id="run_button")
         return super().compose()
 
     def on_mount(self):
@@ -407,27 +415,40 @@ class NewServer(HorizontalGroup):
             self.app.notify(f"Port {port} is already in use", severity="error")
             return
 
-        if self._driver and not self._driver.supports_save_picker():
-            # Name-input mode: no save file needed
-            name = self.query_one("#name_input", Input).value.strip()
-            if not name:
-                self.app.notify("Server name cannot be empty", severity="error")
-                return
-            self._driver.create_game(name=name, port=port)
-        else:
-            # Save-picker mode: derive name from selected file
-            if self._driver:
-                name = self.query_one("#file_selection").renderable.removesuffix(".zip")
-                self._driver.create_game(name=name, port=port, savefile=name)
+        try:
+            if self._driver and not self._driver.supports_save_picker():
+                # Name-input mode: no save file needed
+                name = self.query_one("#name_input", Input).value.strip()
+                if not name:
+                    self.app.notify("Server name cannot be empty", severity="error")
+                    return
+                self._driver.create_game(name=name, port=port)
             else:
-                # Legacy fallback (no driver provided)
-                name = self.query_one("#file_selection").renderable.removesuffix(".zip")
-                from factorio_server import FactorioServer
-                FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
+                # Save-picker mode: derive name from selected file
+                if self._driver:
+                    name = self.query_one("#file_selection").renderable.removesuffix(".zip")
+                    self._driver.create_game(name=name, port=port, savefile=name)
+                else:
+                    # Legacy fallback (no driver provided)
+                    name = self.query_one("#file_selection").renderable.removesuffix(".zip")
+                    from factorio_server import FactorioServer
+                    FactorioServer.create_game(self.app.server, name=name, port=port, savefile=name)
+        except Exception as e:
+            msg = str(e)
+            if "image not known" in msg.lower() or "no such image" in msg.lower() or "not found" in msg.lower():
+                image = getattr(self._driver, "image_tag", "the game image") if self._driver else "the game image"
+                self.app.notify(
+                    f"Image '{image}' not found. Build it first with the Rebuild button.",
+                    severity="error",
+                    title="Image missing",
+                )
+            else:
+                self.app.notify(f"Failed to start server: {e}", severity="error", title="Error")
+            return
 
         # Refresh: prefer GameTab, fall back to app-level refresh
         try:
-            self.ancestor(GameTab).refresh_game_list()
+            self.query_ancestor(GameTab).refresh_game_list()
         except Exception:
             self.app.refresh_server_list()
 
@@ -464,25 +485,23 @@ class GameTab(Widget):
         """
         prefix = self._driver.game_prefix.rstrip("-")
         self._driver.update_game_list()
-        with Horizontal():
-            with Vertical(id="left-panel"):
-                with ScrollableContainer(id=f"server_container-{prefix}"):
-                    for game in self._driver.games.values():
-                        if self._driver.supports_player_count() and game.active_status:
-                            pc = game.player_count()
-                            count = pc if pc is not None else -1
-                        else:
-                            count = -1
-                        yield ServerEntry(
-                            game_name=game.game_name,
-                            game_port=game.game_port,
-                            game_active=game.active_status,
-                            player_count=count,
-                            driver=self._driver,
-                            id=f"server-{game.game_name}",
-                        )
-                yield Rule()
-                yield UpdateSection(driver=self._driver, id="updatesection")
+        with ScrollableContainer(id=f"server_container-{prefix}"):
+            for game in self._driver.games.values():
+                if self._driver.supports_player_count() and game.active_status:
+                    pc = game.player_count()
+                    count = pc if pc is not None else -1
+                else:
+                    count = -1
+                yield ServerEntry(
+                    game_name=game.game_name,
+                    game_port=game.game_port,
+                    game_active=game.active_status,
+                    player_count=count,
+                    driver=self._driver,
+                    id=f"server-{game.game_name}",
+                )
+        with Horizontal(id="bottom-panel"):
+            yield UpdateSection(driver=self._driver, id="updatesection")
             yield NewServer(driver=self._driver, all_drivers=self._all_drivers, id="newserver")
 
     def refresh_game_list(self):
@@ -633,6 +652,13 @@ class ControlServer(App):
 
 
 def main():
+    import sys
+    if "--dev" in sys.argv:
+        import os, subprocess
+        textual = os.path.join(os.path.dirname(sys.executable), "textual")
+        sys.exit(subprocess.run(
+            [textual, "run", "--dev", "server_control:ControlServer"]
+        ).returncode)
     ControlServer().run()
 
 

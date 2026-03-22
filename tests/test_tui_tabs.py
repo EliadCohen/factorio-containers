@@ -17,6 +17,8 @@ Tests:
   - NewServer shows Input#name_input when supports_save_picker() is False
   - NewServer shows FilteredDirectoryTree when supports_save_picker() is True
   - UpdateSection rebuild button calls driver.rebuild_and_recreate()
+  - Delete button calls driver.games[name].delete() and refreshes the tab list
+  - Toggle switch calls start() when turned on and stop() when turned off
 """
 import pytest
 from unittest.mock import MagicMock, patch
@@ -306,3 +308,45 @@ async def test_per_tab_rebuild_calls_driver_rebuild(monkeypatch):
         await pilot.pause(delay=0.1)
 
     driver.rebuild_and_recreate.assert_called_once()
+
+
+# ─── ServerEntry actions ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delete_button_calls_delete_and_refreshes(monkeypatch):
+    """
+    Pressing the Delete button on a ServerEntry must call game.delete() on the
+    correct game object and then call refresh_game_list() on the enclosing
+    GameTab via query_ancestor().
+
+    This guards against regressions where ancestor traversal breaks (e.g. the
+    AttributeError caused by calling the non-existent .ancestor() method
+    instead of .query_ancestor()).
+    """
+    game = _mock_game("factorio-", "mymap", 34197, False)
+    _patch_factorio_driver(monkeypatch, games={"factorio-mymap": game})
+
+    async with ControlServer().run_test(size=(120, 40)) as pilot:
+        await pilot.click("#server-factorio-mymap #delete_button")
+        await pilot.pause(delay=0.1)
+
+    game.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_toggle_switch_starts_and_stops(monkeypatch):
+    """
+    Flipping the on/off Switch in a ServerEntry must call game.start() when
+    turned on and game.stop() when turned off, exercising the same
+    query_ancestor path used by delete.
+    """
+    game = _mock_game("factorio-", "mymap", 34197, True)  # starts running
+    driver = _patch_factorio_driver(monkeypatch, games={"factorio-mymap": game})
+
+    async with ControlServer().run_test(size=(120, 40)) as pilot:
+        # Switch is ON (game is running); clicking it should stop the server.
+        await pilot.click("#server-factorio-mymap #server_active")
+        await pilot.pause(delay=0.1)
+
+    game.stop.assert_called_once()
+    game.start.assert_not_called()

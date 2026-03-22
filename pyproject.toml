@@ -15,6 +15,9 @@ test = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
 ]
+dev = [
+    "textual-dev",
+]
 
 [project.scripts]
 factainer = "server_control:main"

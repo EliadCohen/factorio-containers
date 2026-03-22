@@ -1,0 +1,17 @@
+FROM registry.fedoraproject.org/fedora:latest
+
+# Install 32-bit dependencies required by SteamCMD on 64-bit hosts
+RUN dnf -y update && \
+    dnf -y install glibc.i686 libstdc++.i686 curl tar && \
+    dnf clean all
+
+# SteamCMD must run as a non-root user
+RUN useradd -u 1000 steam
+
+USER steam
+WORKDIR /home/steam
+
+# Download and extract SteamCMD
+RUN mkdir -p steamcmd && \
+    curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
+    | tar -xz -C steamcmd

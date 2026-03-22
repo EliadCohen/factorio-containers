@@ -1,5 +1,5 @@
 DirectoryTree {
-    height: 10;
+    height: 8;
     width: 30;
 }
 
@@ -18,40 +18,56 @@ TabPane {
     height: 1fr;
 }
 
-GameTab > Horizontal {
+GameTab {
     height: 1fr;
 }
 
-#left-panel {
-    width: 1fr;
+GameTab > ScrollableContainer {
     height: 1fr;
 }
 
-#left-panel > ScrollableContainer {
-    height: 1fr;
+#bottom-panel {
+    height: auto;
+    border-top: solid $panel;
+}
+
+#updatesection {
+    width: auto;
+    height: auto;
+    background: $boost;
+    padding: 0 1;
+}
+
+#rebuild_button {
+    width: auto;
+    min-width: 0;
 }
 
 #newserver {
-    width: 50;
-    height: 1fr;
+    width: 1fr;
+    height: auto;
     border-left: solid $panel;
+    padding: 0 1;
+}
+
+#name_input {
+    width: 1fr;
 }
 
 #port_selection {
-    width: 15;
-    height: 3;
+    width: 16;
+}
+
+#newserver_controls {
+    width: 1fr;
+    height: auto;
 }
 
 #file_selection {
     color: $success;
-    max-width: 20;
 }
 
 #run_button {
-    color: $warning
-}
-
-#updatesection {
-    height: 5;
-    background: $boost;
+    color: $warning;
+    width: auto;
 }
