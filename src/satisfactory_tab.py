@@ -30,6 +30,15 @@ Main UI (token saved and valid)
 """
 from __future__ import annotations
 
+import logging
+
+logging.basicConfig(
+    filename="/root/projects/factorio-container/satisfactory_tab.log",
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(funcName)s: %(message)s",
+)
+_log = logging.getLogger(__name__)
+
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer, Horizontal, Vertical
 from textual.message import Message
@@ -188,7 +197,7 @@ class SatisfactoryTab(Widget):
 
     # ── Setup worker + UI callbacks ───────────────────────────────────────────
 
-    def _do_setup_check(self) -> None:
+    def _do_setup_check(self) -> None:  # noqa: C901
         """
         Background worker: probe the server and decide which setup form to show.
 
@@ -202,7 +211,9 @@ class SatisfactoryTab(Widget):
         the returned token: InitialAdmin = unclaimed, Administrator = claimed.
         """
         client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
+        _log.debug("setup_check: health_check...")
         if not client.health_check():
+            _log.debug("setup_check: server offline")
             self.app.call_from_thread(self._show_setup_offline)
             return
 
@@ -210,14 +221,13 @@ class SatisfactoryTab(Widget):
             initial_token = client.passwordless_login()
             self._setup_state["initial_token"] = initial_token
             level = SatisfactoryAPIClient.decode_privilege_level(initial_token)
+            _log.debug("setup_check: passwordless_login ok, level=%s", level)
             if level == "InitialAdmin":
-                # Server is unclaimed (fresh install).
                 self.app.call_from_thread(self._show_setup_unclaimed)
             else:
-                # Server is claimed but has no admin password.
                 self.app.call_from_thread(self._show_setup_no_password)
         except Exception:
-            # Passwordless login failed — admin password is set.
+            _log.exception("setup_check: passwordless_login failed")
             self.app.call_from_thread(self._show_setup_need_password)
 
     def _update_setup_status(self, text: str) -> None:
@@ -332,6 +342,7 @@ class SatisfactoryTab(Widget):
             save_token(api_token)
             self.app.call_from_thread(self._finish_setup)
         except Exception as e:
+            _log.exception("_do_claim failed")
             self.app.notify(f"Claim failed: {e}", severity="error", title="Setup error")
 
     def _do_generate_token(self, auth_token: str) -> None:
@@ -341,6 +352,7 @@ class SatisfactoryTab(Widget):
             save_token(api_token)
             self.app.call_from_thread(self._finish_setup)
         except Exception as e:
+            _log.exception("_do_generate_token failed")
             self.app.notify(f"Token generation failed: {e}", severity="error", title="Setup error")
 
     def _do_password_login(self, password: str) -> None:
@@ -351,6 +363,7 @@ class SatisfactoryTab(Widget):
             save_token(api_token)
             self.app.call_from_thread(self._finish_setup)
         except Exception as e:
+            _log.exception("_do_password_login failed")
             self.app.notify(f"Login failed: {e}", severity="error", title="Setup error")
 
     def _finish_setup(self) -> None:
@@ -381,6 +394,7 @@ class SatisfactoryTab(Widget):
             saves = self._client.enumerate_sessions()
             self.app.call_from_thread(self._update_state, state, saves)
         except Exception as e:
+            _log.exception("_do_refresh API error")
             self.app.notify(f"Satisfactory API error: {e}", severity="warning")
 
     def _set_offline(self) -> None:
@@ -405,27 +419,35 @@ class SatisfactoryTab(Widget):
         try:
             bar = self.query_one("#sat-status-bar", Horizontal)
         except Exception:
+            _log.exception("_render_status_bar: could not find #sat-status-bar")
             return
-        bar.remove_children()
-        if self._online:
-            bar.mount(Label("● Online", classes="sat-online-label"))
-            bar.mount(Label(f"Session: {self._session or '—'}", classes="sat-session-label"))
-            bar.mount(Label(f"Players: {self._players}", classes="sat-players-label"))
-        else:
-            bar.mount(Label("○ Offline", classes="sat-offline-label"))
-            running = self._container_running()
-            if not running:
-                bar.mount(Button("Start container", classes="sat-start-btn", variant="success"))
+        try:
+            bar.remove_children()
+            if self._online:
+                bar.mount(Label("● Online", classes="sat-online-label"))
+                bar.mount(Label(f"Session: {self._session or '—'}", classes="sat-session-label"))
+                bar.mount(Label(f"Players: {self._players}", classes="sat-players-label"))
+            else:
+                bar.mount(Label("○ Offline", classes="sat-offline-label"))
+                running = self._container_running()
+                if not running:
+                    bar.mount(Button("Start container", classes="sat-start-btn", variant="success"))
+        except Exception:
+            _log.exception("_render_status_bar: error rebuilding status bar")
 
     def _render_save_list(self) -> None:
         """Rebuild the scrollable save list from ``self._saves``."""
         try:
             container = self.query_one("#sat-save-list", ScrollableContainer)
         except Exception:
+            _log.exception("_render_save_list: could not find #sat-save-list")
             return
-        container.remove_children()
-        for save in self._saves:
-            container.mount(SaveRow(save, id=f"saverow-{save['saveName']}"))
+        try:
+            container.remove_children()
+            for save in self._saves:
+                container.mount(SaveRow(save, classes="sat-save-row"))
+        except Exception:
+            _log.exception("_render_save_list: error rebuilding save list")
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
@@ -444,7 +466,6 @@ class SatisfactoryTab(Widget):
                 games[0].start()
                 self.app.notify("Starting Satisfactory container…", title="Container")
             else:
-                # No container exists yet — create one with defaults.
                 port = self._get_port()
                 self._game_driver.create_game(name="server", port=port)
                 self.app.notify(
@@ -452,6 +473,7 @@ class SatisfactoryTab(Widget):
                     title="Container",
                 )
         except Exception as e:
+            _log.exception("_do_start_container failed")
             self.app.notify(f"Failed to start container: {e}", severity="error")
 
     def on_satisfactory_tab_load_save(self, event: "SatisfactoryTab.LoadSave") -> None:
@@ -518,4 +540,5 @@ class SatisfactoryTab(Widget):
             )
             self.app.call_from_thread(self.poll)
         except Exception as e:
+            _log.exception("_do_rebuild failed")
             self.app.notify(f"Rebuild failed: {e}", severity="error", title="Rebuild")
