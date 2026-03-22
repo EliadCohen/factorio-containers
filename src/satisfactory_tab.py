@@ -241,8 +241,8 @@ class SatisfactoryTab(Widget):
         self._setup_state["mode"] = "offline"
         widgets = []
         if self._game_driver:
-            widgets.append(Button("Start container", id="sat-start-btn", variant="success"))
-        widgets.append(Button("Retry", id="sat-setup-retry", variant="default"))
+            widgets.append(Button("Start container", classes="sat-start-btn", variant="success"))
+        widgets.append(Button("Retry", classes="sat-setup-retry", variant="default"))
         self._replace_setup_form(*widgets)
 
     def _show_setup_unclaimed(self) -> None:
@@ -253,7 +253,7 @@ class SatisfactoryTab(Widget):
             Input(placeholder="My Factory", id="sat-claim-name"),
             Label("Admin password (leave blank for none):"),
             Input(placeholder="(optional)", password=True, id="sat-claim-password"),
-            Button("Claim server & generate token", id="sat-setup-submit", variant="primary"),
+            Button("Claim server & generate token", classes="sat-setup-submit", variant="primary"),
         )
 
     def _show_setup_no_password(self) -> None:
@@ -261,7 +261,7 @@ class SatisfactoryTab(Widget):
         self._setup_state["mode"] = "generate"
         self._replace_setup_form(
             Label("Server has no admin password — click to generate a token:"),
-            Button("Generate & save API token", id="sat-setup-submit", variant="primary"),
+            Button("Generate & save API token", classes="sat-setup-submit", variant="primary"),
         )
 
     def _show_setup_need_password(self) -> None:
@@ -270,19 +270,19 @@ class SatisfactoryTab(Widget):
         self._replace_setup_form(
             Label("Admin password:"),
             Input(placeholder="Admin password", password=True, id="sat-auth-password"),
-            Button("Login & generate token", id="sat-setup-submit", variant="primary"),
+            Button("Login & generate token", classes="sat-setup-submit", variant="primary"),
         )
 
     # ── Setup button handlers ─────────────────────────────────────────────────
 
-    @on(Button.Pressed, "#sat-setup-retry")
+    @on(Button.Pressed, ".sat-setup-retry")
     def setup_retry(self, event: Button.Pressed) -> None:
         """Re-run the server probe."""
         self._update_setup_status("Checking server status…")
         self._replace_setup_form()
         self.run_worker(self._do_setup_check, thread=True, exit_on_error=False)
 
-    @on(Button.Pressed, "#sat-setup-submit")
+    @on(Button.Pressed, ".sat-setup-submit")
     def setup_submit(self, event: Button.Pressed) -> None:
         """Dispatch to the correct worker based on the current setup mode."""
         mode = self._setup_state.get("mode")
@@ -408,15 +408,14 @@ class SatisfactoryTab(Widget):
             return
         bar.remove_children()
         if self._online:
-            bar.mount(Label("● Online", id="sat-online-label"))
-            bar.mount(Label(f"Session: {self._session or '—'}", id="sat-session-label"))
-            bar.mount(Label(f"Players: {self._players}", id="sat-players-label"))
+            bar.mount(Label("● Online", classes="sat-online-label"))
+            bar.mount(Label(f"Session: {self._session or '—'}", classes="sat-session-label"))
+            bar.mount(Label(f"Players: {self._players}", classes="sat-players-label"))
         else:
-            bar.mount(Label("○ Offline", id="sat-offline-label"))
+            bar.mount(Label("○ Offline", classes="sat-offline-label"))
             running = self._container_running()
             if not running:
-                btn = Button("Start container", id="sat-start-btn", variant="success")
-                bar.mount(btn)
+                bar.mount(Button("Start container", classes="sat-start-btn", variant="success"))
 
     def _render_save_list(self) -> None:
         """Rebuild the scrollable save list from ``self._saves``."""
@@ -430,7 +429,7 @@ class SatisfactoryTab(Widget):
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
-    @on(Button.Pressed, "#sat-start-btn")
+    @on(Button.Pressed, ".sat-start-btn")
     def start_container(self, event: Button.Pressed) -> None:
         """Start (or create-and-start) the Satisfactory container via the Podman driver."""
         if not self._game_driver:

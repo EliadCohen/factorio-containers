@@ -110,19 +110,19 @@ SatisfactoryTab {
     margin-right: 3;
 }
 
-#sat-online-label {
+.sat-online-label {
     color: $success;
 }
 
-#sat-offline-label {
+.sat-offline-label {
     color: $error;
 }
 
-#sat-session-label {
+.sat-session-label {
     color: $text;
 }
 
-#sat-players-label {
+.sat-players-label {
     color: $text-muted;
 }
 

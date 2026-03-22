@@ -294,7 +294,7 @@ async def test_setup_shows_offline_form_when_server_unreachable():
 
         async with _TabApp().run_test() as pilot:
             await pilot.pause(delay=0.3)  # let _do_setup_check worker finish
-            retry_btn = pilot.app.query_one("#sat-setup-retry")
+            retry_btn = pilot.app.query_one(".sat-setup-retry")
             assert retry_btn is not None
 
 
@@ -328,7 +328,7 @@ async def test_setup_shows_generate_button_when_no_password():
 
         async with _TabApp().run_test() as pilot:
             await pilot.pause(delay=0.3)
-            submit = pilot.app.query_one("#sat-setup-submit")
+            submit = pilot.app.query_one(".sat-setup-submit")
             assert submit is not None
             # Claim form must NOT be shown
             assert len(list(pilot.app.query("#sat-claim-name"))) == 0
@@ -370,7 +370,7 @@ async def test_claim_flow_saves_token_and_reloads():
             # Fill in and submit the claim form
             name_inp = pilot.app.query_one("#sat-claim-name", Input)
             name_inp.value = "MyFactory"
-            await pilot.click("#sat-setup-submit")
+            await pilot.click(".sat-setup-submit")
             await pilot.pause(delay=0.3)
 
     mock_save.assert_called_once_with("api-tok")
@@ -396,7 +396,7 @@ async def test_password_login_flow_saves_token():
 
             pw_inp = pilot.app.query_one("#sat-auth-password", Input)
             pw_inp.value = "hunter2"
-            await pilot.click("#sat-setup-submit")
+            await pilot.click(".sat-setup-submit")
             await pilot.pause(delay=0.3)
 
     mock_save.assert_called_once_with("api-tok")
