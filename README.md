@@ -1,25 +1,25 @@
 # factorio-container
 
-Run multiple Factorio headless server instances as Podman containers on a single Fedora host, managed through a terminal UI.
+Run multiple game server instances (Factorio, Satisfactory, …) as Podman containers on a single Fedora host, managed through a tabbed terminal UI. Each game type is a self-contained **driver** — adding a new game means adding a driver, not touching the shared infrastructure.
 
 ## Features
 
-- **Multi-server management** — run any number of Factorio servers simultaneously on different ports
-- **Terminal UI (TUI)** — toggle servers on/off, view real-time player counts, create new instances, all from the terminal
-- **Live player count** — queries each running server via RCON every 5 seconds
-- **One-click rebuild** — rebuild the container image and recreate all servers while preserving run/stop state and gracefully saving games first
-- **Save file picker** — browse the `saves/` directory tree to select a save when launching a new server
-- **Auto port selection** — suggests the next available port when creating a new server
-- **RCON integration** — ephemeral per-container RCON passwords, used for saves and player queries
+- **Multi-game, tabbed UI** — one tab per game type; each tab manages its own servers independently
+- **Multi-server management** — run any number of servers per game type simultaneously on different ports
+- **Live player count** — queries each running server every 5 seconds (Factorio via RCON; other games show `-` where not supported)
+- **Per-tab rebuild** — rebuild a game's container image and recreate only its servers, preserving run/stop state
+- **Save file picker** — browse the `saves/` directory tree to select a save when launching a new Factorio server
+- **Name + port form** — for games without save files (e.g. Satisfactory), enter a name and port directly
+- **Cross-driver port safety** — the port suggestion and validation check all running containers across all game types
+- **RCON integration** — ephemeral per-container RCON passwords for Factorio (saves and player queries)
 - **SELinux compatible** — bind mounts use `relabel="Z"` for Fedora/SELinux hosts
 
 ## Requirements
 
 - **Fedora Linux** (tested; other SELinux-enabled distros may work)
 - **Podman** — must be running as root; the app connects to `/run/user/0/podman/podman.sock`
-- **Python 3.11+** with [uv](https://github.com/astral-sh/uv) for dependency management
-- **Built container image** — `localhost/factorio-headless:latest` (see Quick Start)
-- **Save files** — `.zip` save files placed under `saves/<name>/`
+- **Python 3.12+** with [uv](https://github.com/astral-sh/uv) for dependency management
+- **Built container image(s)** — `localhost/factorio-headless:latest` for Factorio; `localhost/satisfactory-server:latest` for Satisfactory
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ cd factorio-container
 # 2. Install Python dependencies
 uv sync
 
-# 3. Build the container image (downloads Factorio headless binary)
+# 3. Build the Factorio container image
 make build
 
 # 4. Place your save files
@@ -44,173 +44,187 @@ uv run factainer
 
 ## TUI Overview
 
+The TUI opens with one tab per game type. Switch between tabs with the mouse or arrow keys.
+
 ```
-╔══════════════════════════════════════════════════════════════╗
-║  factainer — Factorio Server Manager       q quit  r refresh ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  myworld    :34197  ● Online    2 players  ◉ ON  [Delete]   ║
-║  oldworld   :34198  ○ Offline   -          ○ OFF [Delete]   ║
-║                                                              ║
-╠══════════════════════════════════════════════════════════════╣
-║  [Rebuild & Recreate All]                                    ║
-╠══════════════════════════════════════════════════════════════╣
-║  ▾ saves/                        Selected: myworld.zip       ║
-║    ▾ myworld/                    Port: [34199              ] ║
-║        myworld.zip                                           ║
-║    ▾ oldworld/                   [Run server]                ║
-║        oldworld.zip                                          ║
-╚══════════════════════════════════════════════════════════════╝
+┌─[Factorio]──[Satisfactory]──────────────────────────────────────┐
+│                                                                  │
+│  myworld    :34197  ● Online    2 players  ◉ ON  [Delete]       │
+│  oldworld   :34198  ○ Offline   -          ○ OFF [Delete]       │
+│                                                                  │
+│  [Rebuild & Recreate All]                                        │
+│                                                                  │
+│  ▾ saves/                        Selected: myworld.zip           │
+│    ▾ myworld/                    Port: [34199              ]     │
+│        myworld.zip                                               │
+│    ▾ oldworld/                   [Run server]                    │
+│        oldworld.zip                                              │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Server list (top section)
+```
+┌─[Factorio]──[Satisfactory]──────────────────────────────────────┐
+│                                                                  │
+│  myfactory  :7777   ● Online    -          ◉ ON  [Delete]       │
+│                                                                  │
+│  [Rebuild & Recreate All]                                        │
+│                                                                  │
+│  Name: [my-factory          ]                                    │
+│  Port: [7778               ]                                     │
+│  [Run server]                                                    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Server list
 
 Each row represents one managed container:
 
 | Column | Description |
 |---|---|
-| Name | Server name (container name without `factorio-` prefix) |
-| Port | UDP game port clients connect to |
+| Name | Server name (without game prefix) |
+| Port | Primary UDP/TCP port |
 | Status | `Online` (orange) or `Offline` (red) |
-| Players | Number of connected players, or `-` if server is stopped |
-| Switch | Toggle to start (`ON`) or stop (`OFF`) the container |
+| Players | Connected players, or `-` if server is stopped or game doesn't support RCON |
+| Switch | Toggle to start (`ON`) or stop (`OFF`) |
 | Delete | Stop and remove the container permanently |
 
 ### Keyboard shortcuts
 
 | Key | Action |
 |---|---|
-| `q` | Quit the application |
-| `r` | Manually refresh the server list |
+| `q` | Quit |
+| `r` | Manually refresh all tabs |
 
 The list also refreshes automatically every 5 seconds.
 
-### Rebuild & Recreate All
+### Rebuild & Recreate All (per tab)
 
-Clicking this button:
-1. Sends `/server-save` via RCON to every running server and waits 2 seconds for the file to flush
-2. Rebuilds the `factorio-headless` container image (picks up new Factorio versions)
-3. Deletes all containers
-4. Recreates them with the new image, using the same names, ports, and save files
-5. Stops any containers that were stopped before the rebuild
+Each game tab has its own rebuild button. Clicking it:
+1. Saves any running servers gracefully (Factorio: via RCON `/server-save`; Satisfactory: no-op)
+2. Rebuilds only that game's container image
+3. Deletes and recreates all of that game's containers with the new image
+4. Restores the previous run/stop state
 
-The operation runs in a background thread so the TUI stays responsive during the build.
+The operation runs in a background thread so the TUI stays responsive.
 
-### New server (bottom section)
+### New server form
 
-1. Click a `.zip` file in the directory tree to select a save
-2. Adjust the port if needed (defaults to the next free port)
-3. Click **Run server**
+**Factorio tab** — browse the `saves/` directory tree to pick a `.zip` save file, adjust the port if needed, then click **Run server**.
+
+**Satisfactory tab** — enter a server name and port, then click **Run server**. Satisfactory manages its own save files internally.
+
+The port field always shows the next free port, conflict-checked across all game types.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  server_control.py  (TUI layer)             │
-│  ControlServer / ServerEntry / NewServer    │
-│  UpdateSection / FilteredDirectoryTree      │
-└──────────────┬──────────────────────────────┘
-               │ calls
-┌──────────────▼──────────────────────────────┐
-│  factorio_server.py  (Game Manager)         │
-│  FactorioServer — list, start, stop, delete │
-│  FactorioServer.Game — single container     │
-└──────────┬───────────────────┬──────────────┘
-           │ create            │ RCON queries
-┌──────────▼──────────┐  ┌────▼─────────────┐
-│ factorio_container  │  │  leanrcon.py      │
-│ FactorioGame        │  │  RCONClient       │
-│ podman run + mounts │  │  send_command     │
-└─────────────────────┘  └──────────────────┘
-           │ rebuild
-┌──────────▼──────────┐
-│  image_build.py     │
-│  FactorioContainer  │
-│  Image — podman     │
-│  images.build()     │
+┌──────────────────────────────────────────────────────────┐
+│  server_control.py  (TUI)                                │
+│  ControlServer — TabbedContent, one GameTab per driver   │
+│  GameTab — server list + UpdateSection + NewServer       │
+│  ServerEntry — one row (name/port/status/players/toggle) │
+└────────────────────┬─────────────────────────────────────┘
+                     │ driver.games, driver.create_game(), …
+┌────────────────────▼─────────────────────────────────────┐
+│  game_driver.py  (GameDriver ABC)                        │
+│  _all_ports_in_use / _next_available_port utilities      │
+└──────┬──────────────────────────────────────┬────────────┘
+       │                                      │
+┌──────▼──────────────┐            ┌──────────▼────────────┐
+│  factorio_server.py │            │ satisfactory_server.py│
+│  FactorioServer     │            │ SatisfactoryServer    │
+│  (GameDriver impl)  │            │ (GameDriver impl)     │
+└──────┬──────────────┘            └──────────┬────────────┘
+       │ create                               │ create
+┌──────▼──────────────┐            ┌──────────▼────────────┐
+│ factorio_container  │            │satisfactory_container │
+│ FactorioGame        │            │SatisfactoryGame       │
+│ podman run + mounts │            │podman run (no mounts) │
+└──────┬──────────────┘            └──────────┬────────────┘
+       │ rebuild                              │ rebuild
+┌──────▼──────────────┐            ┌──────────▼────────────┐
+│  image_build.py     │            │satisfactory_image_    │
+│  FactorioContainer  │            │build.py               │
+│  Image              │            │SatisfactoryContainer  │
+└──────────────────┬──┘            │Image                  │
+                   │               └───────────────────────┘
+┌──────────────────▼──┐
+│  leanrcon.py        │  (Factorio only)
+│  RCONClient         │
 └─────────────────────┘
 ```
 
-### Layer descriptions
+### GameDriver ABC
 
-**TUI Layer** (`src/server_control.py`)
-Textual application. `ControlServer` is the root `App` class. Renders server
-entries as `ServerEntry` (toggle switch + player count), houses the rebuild
-button in `UpdateSection`, and the save picker + port input in `NewServer`.
-CSS styles live in `src/control_server.css`. Auto-refreshes every 5 seconds;
-the rebuild runs in a worker thread with `call_from_thread` for TUI safety.
+Every game type implements `GameDriver` (`src/game_driver.py`):
 
-**Game Manager** (`src/factorio_server.py`)
-`FactorioServer` wraps the Podman Python API to list, start, stop, and delete
-containers. Identifies managed containers by the `factorio-` name prefix.
-Each container is represented as a `FactorioServer.Game` object. RCON
-credentials are round-tripped through container labels — stored at creation
-time by `FactorioGame`, recovered at list time by `_list_games()`.
+| Member | Description |
+|---|---|
+| `game_prefix` | Container name prefix, e.g. `"factorio-"` |
+| `display_name` | Tab label, e.g. `"Factorio"` |
+| `base_port` | Default starting port for suggestions |
+| `image_tag` | Podman image name |
+| `games` | Dict of `container_name → Game` |
+| `update_game_list()` | Refresh `games` from Podman |
+| `create_game(name, port, **kwargs)` | Create and start a new container |
+| `rebuild_and_recreate()` | Rebuild image and recreate containers |
+| `get_all_ports()` | All ports occupied by this driver's containers |
+| `supports_player_count()` | `True` if live player count is available (default `True`) |
+| `supports_save_picker()` | `True` if creation form needs a save file (default `True`) |
 
-**Container Creator** (`src/factorio_container.py`)
-`FactorioGame` handles container creation via `podman run`. Uses
-`localhost/factorio-headless:latest`, binds saves from the host's `saves/`
-directory, uses `network_mode="host"` (no port mapping needed), and applies
-`relabel="Z"` for SELinux compatibility. RCON port = game port + 1000.
+### Port safety
 
-**RCON Client** (`src/leanrcon.py`)
-Minimal Valve RCON implementation. Supports connect/auth/send/recv. Used to
-issue `/server-save` before rebuilds and `/c rcon.print(#game.connected_players)`
-for player counts.
+`get_all_ports()` returns every port a driver's containers use — game port plus any auxiliary ports (RCON, beacon, query). The TUI unions these across all drivers before suggesting or validating a port, so two different game types can never accidentally share a port.
 
-**Image Builder** (`src/image_build.py`)
-`FactorioContainerImage` builds the image from `Container/Containerfile`.
-Called by `FactorioServer.rebuild_and_recreate()`.
+## Game-specific notes
 
-## Saves Directory Layout
+### Factorio
+
+- Container image: `localhost/factorio-headless:latest` built from `Container/Containerfile`
+- Saves: host directory `saves/<name>/` bind-mounted into the container with SELinux relabeling
+- RCON port = game port + 1000; random password stored as a container label
+- `server-settings.json` auto-created from `Container/server-settings.json` template on first run
 
 ```
 saves/
 ├── myworld/
-│   ├── myworld.zip          ← main save file
-│   └── server-settings.json ← auto-created from template on first run
+│   ├── myworld.zip          ← main save
+│   └── server-settings.json ← auto-created
 └── oldworld/
     ├── oldworld.zip
     └── server-settings.json
 ```
 
-Each server gets its own subdirectory. The subdirectory name must match the
-`.zip` filename stem. `server-settings.json` is created automatically from
-`Container/server-settings.json` (the template) the first time a server is
-started; the `"name"` field is updated to match the server name.
+### Satisfactory
 
-Files are `chown`-ed to UID 1001 (the `factorio` user inside the container)
-before the container starts so the non-root process can write autosaves.
+- Container image: `localhost/satisfactory-server:latest` built from `Container-Satisfactory/Containerfile`
+- Installation: SteamCMD downloads App ID 1690800 (~7 GB, cached as a Podman image layer)
+- Ports: game port (default 7777, TCP/UDP) + beacon port = game port + 1111
+- Saves: managed internally by the game at `~/.config/Epic/FactoryGame/Saved/SaveGames/server` inside the container
+- No RCON; player count always shows `-`
 
-## Container Image
+## Saves Directory (Factorio)
 
-`Container/Containerfile` is a multi-stage Fedora-based image that:
-1. Downloads the Factorio headless binary from factorio.com
-2. Creates a non-root `factorio` user (UID 1001)
-3. Runs `Container/start_server.sh` at startup, which expects `SAVEFILE` and
-   `PORT` environment variables (injected by the container creator)
+```
+saves/
+├── myworld/
+│   ├── myworld.zip
+│   └── server-settings.json
+└── oldworld/
+    ├── oldworld.zip
+    └── server-settings.json
+```
+
+Autosave files (`_autosave*.zip`) are hidden from the TUI picker.
 
 ## Development
 
 ```bash
-# Install dependencies
-uv sync
-
-# Run the TUI
-uv run factainer
-# or:
-uv run python src/server_control.py
-
-# Build the container image (with layer cache)
-make build
-# or: bash build.sh
-
-# Rebuild container image (no cache — picks up new Factorio release)
-make update
-
-# Remove dangling Podman images after rebuilds
-make clean
-# or: bash clean_images.sh
+uv sync                          # install dependencies
+uv run factainer                 # run the TUI
+make build                       # build Factorio image (cached)
+make update                      # rebuild Factorio image (no cache)
+make clean                       # remove dangling Podman images
 ```
 
 ## Testing
@@ -219,17 +233,25 @@ make clean
 # Unit tests (no Podman socket required)
 uv run pytest tests/ --ignore=tests/integration/ -v
 
-# Integration tests (requires Podman socket + built image + saves/testo/testo.zip)
+# Integration tests (requires live Podman + built image + saves/testo/testo.zip)
 uv run pytest tests/integration/ -v
 ```
 
-### Test structure
-
-| Path | What it tests |
+| Test file | Covers |
 |---|---|
-| `tests/test_logic.py` | RCON packet encoding, `FactorioGame` init, server label parsing, `_rcon_save`, name uniqueness, `rebuild_and_recreate`, player count |
-| `tests/test_tui.py` | Textual widget composition, reactive markup, button handlers, refresh logic, port picker |
-| `tests/integration/test_rcon_save.py` | End-to-end: starts a real container, issues `/server-save`, verifies the `.zip` mtime changes |
+| `tests/test_logic.py` | Factorio RCON, container creator, server manager, rebuild |
+| `tests/test_satisfactory_logic.py` | Satisfactory container creator, server manager, driver properties |
+| `tests/test_tui.py` | Textual widgets, reactive markup, button handlers, refresh, port picker |
+| `tests/test_tui_tabs.py` | Tab composition, `GameTab`, cross-driver port utilities, per-tab rebuild |
+| `tests/integration/test_rcon_save.py` | End-to-end Factorio save via RCON |
 
-The `podman` package is globally stubbed in `tests/conftest.py` so unit and
-TUI tests run without a live Podman socket.
+## Adding a New Game Server
+
+See the **Adding a New Game Server Driver** section in [CLAUDE.md](CLAUDE.md) for the full step-by-step guide. The short version:
+
+1. **`src/<game>_container.py`** — container creator (`<game>_container.py`); store ports as container labels
+2. **`src/<game>_server.py`** — server manager implementing `GameDriver`; read ports back from labels in `_list_games()`
+3. **`src/<game>_image_build.py`** — image builder
+4. **`Container-<Game>/Containerfile`** + **`start_server.sh`** — container image definition
+5. **Register** the driver in `ControlServer.all_drivers` in `src/server_control.py`
+6. **Tests** in `tests/test_<game>_logic.py` modeled on `tests/test_satisfactory_logic.py`
