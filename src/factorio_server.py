@@ -22,9 +22,10 @@ from podman import PodmanClient
 from factorio_container import FactorioGame
 from image_build import FactorioContainerImage
 from leanrcon import send_command
+from game_driver import GameDriver
 
 
-class FactorioServer():
+class FactorioServer(GameDriver):
     """
     Application-level manager for all Factorio headless server containers.
 
@@ -189,7 +190,40 @@ class FactorioServer():
         ``update_game_list()`` to populate it.
         """
         self._client = PodmanClient(uri = "unix:///run/user/0/podman/podman.sock")
-        self.games = {}
+        self._games = {}
+
+    @property
+    def games(self) -> dict:
+        return self._games
+
+    @games.setter
+    def games(self, value: dict) -> None:
+        self._games = value
+
+    @property
+    def game_prefix(self) -> str:
+        return self.GAME_PREFIX
+
+    @property
+    def display_name(self) -> str:
+        return "Factorio"
+
+    @property
+    def base_port(self) -> int:
+        return 34197
+
+    @property
+    def image_tag(self) -> str:
+        return "localhost/factorio-headless:latest"
+
+    def get_all_ports(self) -> set[int]:
+        """Return all ports used by Factorio containers (game + RCON)."""
+        ports = set()
+        for game in self.games.values():
+            ports.add(game.game_port)
+            if game.rcon_port:
+                ports.add(game.rcon_port)
+        return ports
 
     def start_game(self, game: "FactorioServer.Game"):
         """

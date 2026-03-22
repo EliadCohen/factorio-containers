@@ -1,0 +1,32 @@
+FROM registry.fedoraproject.org/fedora:latest
+
+# Install dependencies for SteamCMD (requires 32-bit glibc on 64-bit hosts)
+RUN dnf -y update && \
+    dnf -y install glibc.i686 libstdc++.i686 curl tar && \
+    dnf clean all
+
+# Create non-root steam user (SteamCMD convention)
+RUN useradd -u 1000 steam
+
+USER steam
+WORKDIR /home/steam
+
+# Install SteamCMD
+RUN mkdir -p steamcmd && \
+    curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz \
+    | tar -xz -C steamcmd
+
+# Install Satisfactory Dedicated Server (App ID 1690800, ~7GB)
+# This layer is cached by Podman after the first build
+RUN ./steamcmd/steamcmd.sh \
+    +force_install_dir /home/steam/SatisfactoryDedicatedServer \
+    +login anonymous \
+    +app_update 1690800 validate \
+    +quit
+
+COPY --chown=steam:steam start_server.sh /home/steam/
+RUN chmod +x /home/steam/start_server.sh
+
+EXPOSE 7777/udp 7777/tcp 8888/tcp
+
+CMD ["/home/steam/start_server.sh"]

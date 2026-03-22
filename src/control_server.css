@@ -10,7 +10,15 @@ ItemGrid#server_grid {
     border: round green;
 }
 
-ScrollableContainer#server_container {
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    height: 1fr;
+}
+
+GameTab > ScrollableContainer {
     height: 28;
 }
 

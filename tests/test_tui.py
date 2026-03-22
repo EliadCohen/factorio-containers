@@ -1,29 +1,32 @@
 """
 TUI tests using Textual's async pilot.
 
-Each test replaces ``ControlServer.server`` with a ``MagicMock`` so no real
-Podman socket is needed.  Tests cover:
+Each test replaces ``ControlServer.factorio_driver`` with a ``MagicMock`` so
+no real Podman socket is needed.  Tests cover:
   - Widget composition and structure (sections, buttons, containers)
   - Reactive state markup (status labels, player count display)
   - Button interactions (rebuild trigger, new-server creation)
   - Refresh logic (adding and removing ServerEntry widgets)
   - Port picker behaviour (base port, port skipping)
 
-Why monkeypatching server at the class level
----------------------------------------------
-``ControlServer.server = FactorioServer()`` is evaluated at class-definition
-time, which would fail if the Podman socket is absent.  The conftest.py stub
-prevents the import error, but individual test methods still need a mock
-server so they can control what ``server.games`` contains.  Using
-``monkeypatch.setattr(ControlServer, "server", ...)`` replaces the class
-attribute before the app mounts, making all ``self.app.server`` accesses in
-the app and widgets return the mock.
+Why monkeypatching the driver at the class level
+-------------------------------------------------
+``ControlServer.factorio_driver = FactorioServer()`` is evaluated at
+class-definition time, which would fail if the Podman socket is absent.  The
+conftest.py stub prevents the import error, but individual test methods still
+need a mock driver so they can control what ``driver.games`` contains.  Using
+``monkeypatch.setattr(ControlServer, "factorio_driver", ...)`` replaces the
+class attribute before the app mounts, making all driver accesses in the app
+and widgets return the mock.
+
+``ControlServer.server`` is kept as a legacy alias; tests that monkeypatch
+``server`` will also need to patch ``factorio_driver`` in the new architecture.
 """
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-# server_control imports FactorioServer and executes ControlServer.server = FactorioServer()
+# server_control imports FactorioServer and executes ControlServer.factorio_driver = FactorioServer()
 # at class-definition time.  The podman stub in conftest.py ensures that works.
 from server_control import (
     ControlServer,
@@ -36,17 +39,42 @@ from server_control import (
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+def _mock_driver(games=None, game_prefix="factorio-", display_name="Factorio",
+                 base_port=34197, supports_player_count=True, supports_save_picker=True):
+    """
+    Return a MagicMock GameDriver with an optional games dict and sensible defaults.
+
+    Args:
+        games (dict | None): Maps container name → mock game object.
+            Defaults to an empty dict (no servers).
+        game_prefix (str): Container name prefix.
+        display_name (str): Tab label.
+        base_port (int): Default starting port.
+        supports_player_count (bool): Whether the driver reports player counts.
+        supports_save_picker (bool): Whether new-server uses file picker.
+    """
+    d = MagicMock()
+    d.games = games or {}
+    d.game_prefix = game_prefix
+    d.display_name = display_name
+    d.base_port = base_port
+    d.supports_player_count.return_value = supports_player_count
+    d.supports_save_picker.return_value = supports_save_picker
+    d.get_all_ports.return_value = {g.game_port for g in (games or {}).values()}
+    return d
+
+
 def _mock_server(games=None):
     """
     Return a MagicMock FactorioServer with an optional games dict.
+
+    Kept for backwards compatibility; delegates to _mock_driver.
 
     Args:
         games (dict | None): Maps container name → mock game object.
             Defaults to an empty dict (no servers).
     """
-    s = MagicMock()
-    s.games = games or {}
-    return s
+    return _mock_driver(games=games)
 
 
 def _mock_game(name, port, running):
@@ -64,6 +92,22 @@ def _mock_game(name, port, running):
     g.active_status = running
     g.player_count.return_value = None  # default: unknown player count
     return g
+
+
+def _patch_driver(monkeypatch, games=None, **kwargs):
+    """
+    Monkeypatch ControlServer.factorio_driver with a mock driver.
+
+    Also patches the legacy ``server`` alias so old code paths that access
+    ``self.app.server`` continue to work.
+
+    Returns:
+        MagicMock: The mock driver.
+    """
+    mock = _mock_driver(games=games, **kwargs)
+    monkeypatch.setattr(ControlServer, "factorio_driver", mock)
+    monkeypatch.setattr(ControlServer, "server", mock)
+    return mock
 
 
 # ─── FilteredDirectoryTree ────────────────────────────────────────────────────
@@ -163,12 +207,13 @@ class TestPlayerCountMarkup:
     Called as unbound to avoid Textual reactive machinery.
     """
 
-    def _markup(self, count: int) -> str:
+    def _markup(self, count: int, driver=None) -> str:
         """Call _player_count_markup on a minimal stub with the given count."""
         class _Stub:
             pass
         stub = _Stub()
         stub.player_count = count
+        stub._driver = driver
         return ServerEntry._player_count_markup(stub)
 
     def test_shows_count_when_non_negative(self):
@@ -193,7 +238,7 @@ class TestPlayerCountMarkup:
 @pytest.mark.asyncio
 async def test_app_renders_with_no_games(monkeypatch):
     """App must mount successfully even when there are no managed containers."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
         # Basic smoke-test: app mounted without exceptions
         assert pilot.app is not None
@@ -202,16 +247,16 @@ async def test_app_renders_with_no_games(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_has_server_container(monkeypatch):
     """The scrollable server list container must be present in the DOM."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
-        container = pilot.app.query_one("#server_container")
+        container = pilot.app.query_one("#server_container-factorio")
         assert container is not None
 
 
 @pytest.mark.asyncio
 async def test_app_has_update_section(monkeypatch):
     """The UpdateSection widget must be mounted in the DOM."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
         section = pilot.app.query_one("#updatesection")
         assert section is not None
@@ -220,7 +265,7 @@ async def test_app_has_update_section(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_has_rebuild_button(monkeypatch):
     """The rebuild button must be present and queryable."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
         btn = pilot.app.query_one("#rebuild_button")
         assert btn is not None
@@ -229,7 +274,7 @@ async def test_app_has_rebuild_button(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_has_new_server_section(monkeypatch):
     """The NewServer section must be mounted in the DOM."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
         section = pilot.app.query_one("#newserver")
         assert section is not None
@@ -237,12 +282,12 @@ async def test_app_has_new_server_section(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_server_entries_rendered_for_existing_games(monkeypatch):
-    """One ServerEntry widget must be mounted for each game in server.games."""
+    """One ServerEntry widget must be mounted for each game in driver.games."""
     games = {
         "factorio-world1": _mock_game("world1", 34200, True),
         "factorio-world2": _mock_game("world2", 34201, False),
     }
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         entries = pilot.app.query(ServerEntry)
         assert len(list(entries)) == 2
@@ -252,7 +297,7 @@ async def test_server_entries_rendered_for_existing_games(monkeypatch):
 async def test_server_entry_shows_correct_port(monkeypatch):
     """The port label in a ServerEntry must display the game's UDP port."""
     games = {"factorio-mymap": _mock_game("mymap", 34197, False)}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         port_label = pilot.app.query_one("#server-factorio-mymap #server_port")
         assert "34197" in str(port_label.renderable)
@@ -262,7 +307,7 @@ async def test_server_entry_shows_correct_port(monkeypatch):
 async def test_server_entry_shows_name_without_prefix(monkeypatch):
     """The name label must strip the 'factorio-' prefix for display."""
     games = {"factorio-mymap": _mock_game("mymap", 34197, False)}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         name_label = pilot.app.query_one("#server-factorio-mymap #server_name")
         rendered = str(name_label.renderable)
@@ -275,21 +320,20 @@ async def test_server_entry_shows_name_without_prefix(monkeypatch):
 @pytest.mark.asyncio
 async def test_rebuild_button_triggers_rebuild_and_recreate(monkeypatch):
     """
-    Clicking the rebuild button must call server.rebuild_and_recreate() exactly once.
+    Clicking the rebuild button must call driver.rebuild_and_recreate() exactly once.
 
     Uses a tall terminal (size=(120, 60)) so UpdateSection is visible and
     the button can receive the click event.
     """
-    server = _mock_server()
-    server.rebuild_and_recreate.return_value = {"recreated": [], "restarted": []}
-    monkeypatch.setattr(ControlServer, "server", server)
+    driver = _patch_driver(monkeypatch)
+    driver.rebuild_and_recreate.return_value = {"recreated": [], "restarted": []}
 
     # Use a tall terminal so UpdateSection (below the server list) is in view.
     async with ControlServer().run_test(size=(120, 60)) as pilot:
         await pilot.click("#rebuild_button")
         await pilot.pause(delay=0.1)
 
-    server.rebuild_and_recreate.assert_called_once()
+    driver.rebuild_and_recreate.assert_called_once()
 
 
 # ─── NewServer port picker ────────────────────────────────────────────────────
@@ -297,7 +341,7 @@ async def test_rebuild_button_triggers_rebuild_and_recreate(monkeypatch):
 @pytest.mark.asyncio
 async def test_new_server_port_defaults_to_base_port(monkeypatch):
     """When no servers exist, the port input must default to BASE_PORT."""
-    monkeypatch.setattr(ControlServer, "server", _mock_server())
+    _patch_driver(monkeypatch)
     async with ControlServer().run_test() as pilot:
         port_input = pilot.app.query_one("#port_selection")
         assert port_input.value == str(NewServer.BASE_PORT)
@@ -311,7 +355,7 @@ async def test_new_server_port_skips_in_use_ports(monkeypatch):
     """
     base = NewServer.BASE_PORT
     games = {f"factorio-g{i}": _mock_game(f"g{i}", base + i, True) for i in range(3)}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         port_input = pilot.app.query_one("#port_selection")
         assert int(port_input.value) == base + 3
@@ -322,16 +366,15 @@ async def test_new_server_port_skips_in_use_ports(monkeypatch):
 @pytest.mark.asyncio
 async def test_refresh_removes_deleted_game_entries(monkeypatch):
     """
-    After a game disappears from server.games, refresh_server_list must
+    After a game disappears from driver.games, refresh_server_list must
     remove the corresponding ServerEntry widget from the DOM.
     """
     games = {"factorio-gone": _mock_game("gone", 34200, False)}
-    server = _mock_server(games)
-    monkeypatch.setattr(ControlServer, "server", server)
+    driver = _patch_driver(monkeypatch, games=games)
 
     async with ControlServer().run_test() as pilot:
         # Simulate the game disappearing (container deleted externally)
-        server.games = {}
+        driver.games = {}
         pilot.app.refresh_server_list()
         await pilot.pause()
 
@@ -342,15 +385,14 @@ async def test_refresh_removes_deleted_game_entries(monkeypatch):
 @pytest.mark.asyncio
 async def test_refresh_adds_new_game_entries(monkeypatch):
     """
-    After a new game appears in server.games, refresh_server_list must
+    After a new game appears in driver.games, refresh_server_list must
     mount a new ServerEntry widget for it.
     """
-    server = _mock_server()
-    monkeypatch.setattr(ControlServer, "server", server)
+    driver = _patch_driver(monkeypatch)
 
     async with ControlServer().run_test() as pilot:
         new_game = _mock_game("newworld", 34200, True)
-        server.games = {"factorio-newworld": new_game}
+        driver.games = {"factorio-newworld": new_game}
         pilot.app.refresh_server_list()
         await pilot.pause()
 
@@ -366,7 +408,7 @@ async def test_server_entry_shows_player_count(monkeypatch):
     game = _mock_game("mymap", 34200, True)
     game.player_count.return_value = 2
     games = {"factorio-mymap": game}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         label = pilot.app.query_one("#server-factorio-mymap #player_count")
         assert "2" in str(label.renderable)
@@ -377,7 +419,7 @@ async def test_stopped_server_shows_dash_for_player_count(monkeypatch):
     """Stopped game: player_count() is not called, label shows '-'."""
     game = _mock_game("mymap", 34200, False)
     games = {"factorio-mymap": game}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         label = pilot.app.query_one("#server-factorio-mymap #player_count")
         assert str(label.renderable) == "-"
@@ -393,7 +435,7 @@ async def test_player_count_not_queried_for_stopped_game(monkeypatch):
     """
     game = _mock_game("mymap", 34200, False)
     games = {"factorio-mymap": game}
-    monkeypatch.setattr(ControlServer, "server", _mock_server(games))
+    _patch_driver(monkeypatch, games=games)
     async with ControlServer().run_test() as pilot:
         game.player_count.assert_not_called()
 
@@ -404,8 +446,7 @@ async def test_refresh_updates_player_count(monkeypatch):
     game = _mock_game("mymap", 34200, True)
     game.player_count.return_value = 0
     games = {"factorio-mymap": game}
-    server = _mock_server(games)
-    monkeypatch.setattr(ControlServer, "server", server)
+    driver = _patch_driver(monkeypatch, games=games)
 
     async with ControlServer().run_test() as pilot:
         # Simulate a player joining between refreshes
