@@ -7,6 +7,7 @@ The API client and token file are mocked throughout.
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 from textual.app import App
+from textual.widgets import Input
 
 from satisfactory_api import SatisfactoryAPIClient, load_token, save_token
 from satisfactory_tab import SatisfactoryTab, SaveRow
@@ -29,6 +30,21 @@ def test_client_health_check_failure():
     client = _make_client()
     with patch.object(client._session, "post", side_effect=Exception("refused")):
         assert client.health_check() is False
+
+
+def test_client_get_server_name_returns_name():
+    client = _make_client()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"data": {"serverCustomName": "MyServer"}}
+    with patch.object(client._session, "post", return_value=resp):
+        assert client.get_server_name() == "MyServer"
+
+
+def test_client_get_server_name_returns_empty_on_error():
+    client = _make_client()
+    with patch.object(client._session, "post", side_effect=Exception("refused")):
+        assert client.get_server_name() == ""
 
 
 def test_client_query_server_state():
@@ -111,6 +127,90 @@ def test_client_create_new_game_posts_correct_body():
     assert body["data"]["newGameData"]["sessionName"] == "NewSession"
 
 
+# ─── Auth / setup flow API tests ──────────────────────────────────────────────
+
+def _resp(status, body):
+    """Return a mock requests.Response."""
+    r = MagicMock()
+    r.ok = status < 400
+    r.status_code = status
+    r.json.return_value = body
+    r.text = str(body)
+    return r
+
+
+def test_client_passwordless_login_returns_token():
+    client = SatisfactoryAPIClient(host="localhost", port=7777)  # no token
+    with patch.object(client._session, "post",
+                      return_value=_resp(200, {"data": {"authenticationToken": "tmp-tok"}})):
+        assert client.passwordless_login() == "tmp-tok"
+
+
+def test_client_passwordless_login_sends_no_auth_header():
+    """PasswordlessLogin must suppress any Authorization header."""
+    client = SatisfactoryAPIClient(host="localhost", port=7777, token="stored-tok")
+    captured = {}
+    def fake_post(url, **kwargs):
+        captured["headers"] = kwargs.get("headers")
+        return _resp(200, {"data": {"authenticationToken": "tmp"}})
+    with patch.object(client._session, "post", side_effect=fake_post):
+        client.passwordless_login()
+    # auth_token="" → header value is None → requests drops it
+    assert captured["headers"].get("Authorization") is None
+
+
+def test_client_password_login_returns_token():
+    client = SatisfactoryAPIClient(host="localhost", port=7777)
+    with patch.object(client._session, "post",
+                      return_value=_resp(200, {"data": {"authenticationToken": "auth-tok"}})):
+        assert client.password_login("secret") == "auth-tok"
+
+
+def test_client_password_login_sends_password_in_body():
+    client = SatisfactoryAPIClient(host="localhost", port=7777)
+    captured = {}
+    def fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("json")
+        return _resp(200, {"data": {"authenticationToken": "tok"}})
+    with patch.object(client._session, "post", side_effect=fake_post):
+        client.password_login("hunter2")
+    assert captured["body"]["data"]["Password"] == "hunter2"
+
+
+def test_client_claim_server_sends_name_and_password():
+    client = SatisfactoryAPIClient(host="localhost", port=7777)
+    captured = {}
+    def fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("json")
+        captured["headers"] = kwargs.get("headers") or {}
+        return _resp(200, {"data": {"authenticationToken": "new-tok"}})
+    with patch.object(client._session, "post", side_effect=fake_post):
+        result = client.claim_server("MyFactory", "pw123", "initial-tok")
+    assert result == "new-tok"
+    assert captured["body"]["data"]["serverName"] == "MyFactory"
+    assert captured["body"]["data"]["adminPassword"] == "pw123"
+    assert "initial-tok" in captured["headers"].get("Authorization", "")
+
+
+def test_client_generate_api_token_returns_token():
+    client = SatisfactoryAPIClient(host="localhost", port=7777)
+    with patch.object(client._session, "post",
+                      return_value=_resp(200, {"data": {"token": "long-lived-tok"}})):
+        assert client.generate_api_token("auth-tok") == "long-lived-tok"
+
+
+def test_client_generate_api_token_uses_auth_override():
+    """generate_api_token must send the provided auth_token, not the stored one."""
+    client = SatisfactoryAPIClient(host="localhost", port=7777, token="stored-tok")
+    captured = {}
+    def fake_post(url, **kwargs):
+        captured["headers"] = kwargs.get("headers") or {}
+        return _resp(200, {"data": {"token": "new-tok"}})
+    with patch.object(client._session, "post", side_effect=fake_post):
+        client.generate_api_token("temp-tok")
+    assert "temp-tok" in captured["headers"].get("Authorization", "")
+
+
 # ─── Token helpers ────────────────────────────────────────────────────────────
 
 def test_load_token_returns_none_when_missing():
@@ -155,10 +255,11 @@ class _TabApp(App):
 @pytest.mark.asyncio
 async def test_tab_shows_setup_when_no_token():
     """When no token file exists the tab must render the setup UI."""
-    with patch("satisfactory_tab.load_token", return_value=None):
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch.object(SatisfactoryTab, "_do_setup_check", lambda self: None):
         async with _TabApp().run_test() as pilot:
-            warn = pilot.app.query_one("#sat-setup-warn")
-            assert "No API token" in str(warn.renderable)
+            status = pilot.app.query_one("#sat-setup-status")
+            assert status is not None
 
 
 @pytest.mark.asyncio
@@ -171,6 +272,123 @@ async def test_tab_shows_main_ui_when_token_present():
             assert pilot.app.query_one("#sat-status-bar") is not None
             assert pilot.app.query_one("#sat-actions") is not None
 
+
+# ─── Setup flow TUI tests ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_setup_shows_offline_form_when_server_unreachable():
+    """When the server is unreachable the setup form must show a Retry button."""
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
+        MockClient.return_value.health_check.return_value = False
+
+        async with _TabApp().run_test() as pilot:
+            await pilot.pause(delay=0.3)  # let _do_setup_check worker finish
+            retry_btn = pilot.app.query_one("#sat-setup-retry")
+            assert retry_btn is not None
+
+
+@pytest.mark.asyncio
+async def test_setup_shows_claim_form_when_unclaimed():
+    """An unclaimed server (no server name) must show the claim form."""
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
+        MockClient.return_value.health_check.return_value = True
+        MockClient.return_value.get_server_name.return_value = ""
+        MockClient.return_value.passwordless_login.return_value = "tmp-tok"
+
+        async with _TabApp().run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            name_input = pilot.app.query_one("#sat-claim-name")
+            assert name_input is not None
+
+
+@pytest.mark.asyncio
+async def test_setup_shows_generate_button_when_no_password():
+    """A claimed server with no admin password must show one-click token generation."""
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
+        MockClient.return_value.health_check.return_value = True
+        MockClient.return_value.get_server_name.return_value = "MyServer"
+        MockClient.return_value.passwordless_login.return_value = "tmp-tok"
+
+        async with _TabApp().run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            submit = pilot.app.query_one("#sat-setup-submit")
+            assert submit is not None
+            # Claim form must NOT be shown (server already has a name)
+            assert len(list(pilot.app.query("#sat-claim-name"))) == 0
+
+
+@pytest.mark.asyncio
+async def test_setup_shows_password_form_when_server_has_password():
+    """A server with an admin password must show the password input form."""
+    from satisfactory_api import SatisfactoryAPIError
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
+        MockClient.return_value.health_check.return_value = True
+        MockClient.return_value.get_server_name.return_value = "MyServer"
+        MockClient.return_value.passwordless_login.side_effect = SatisfactoryAPIError("401")
+
+        async with _TabApp().run_test() as pilot:
+            await pilot.pause(delay=0.3)
+            pw_input = pilot.app.query_one("#sat-auth-password")
+            assert pw_input is not None
+
+
+@pytest.mark.asyncio
+async def test_claim_flow_saves_token_and_reloads():
+    """Submitting the claim form must call claim_server + generate_api_token and save."""
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient, \
+         patch("satisfactory_tab.save_token") as mock_save, \
+         patch.object(SatisfactoryTab, "_finish_setup", lambda self: None):
+        inst = MockClient.return_value
+        inst.health_check.return_value = True
+        inst.get_server_name.return_value = ""
+        inst.passwordless_login.return_value = "tmp-tok"
+        inst.claim_server.return_value = "claimed-tok"
+        inst.generate_api_token.return_value = "api-tok"
+
+        async with _TabApp().run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)  # let setup check finish
+
+            # Fill in and submit the claim form
+            name_inp = pilot.app.query_one("#sat-claim-name", Input)
+            name_inp.value = "MyFactory"
+            await pilot.click("#sat-setup-submit")
+            await pilot.pause(delay=0.3)
+
+    mock_save.assert_called_once_with("api-tok")
+
+
+@pytest.mark.asyncio
+async def test_password_login_flow_saves_token():
+    """Submitting a password generates and saves an API token."""
+    from satisfactory_api import SatisfactoryAPIError
+    with patch("satisfactory_tab.load_token", return_value=None), \
+         patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient, \
+         patch("satisfactory_tab.save_token") as mock_save, \
+         patch.object(SatisfactoryTab, "_finish_setup", lambda self: None):
+        inst = MockClient.return_value
+        inst.health_check.return_value = True
+        inst.get_server_name.return_value = "MyServer"
+        inst.passwordless_login.side_effect = SatisfactoryAPIError("401")
+        inst.password_login.return_value = "auth-tok"
+        inst.generate_api_token.return_value = "api-tok"
+
+        async with _TabApp().run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+
+            pw_inp = pilot.app.query_one("#sat-auth-password", Input)
+            pw_inp.value = "hunter2"
+            await pilot.click("#sat-setup-submit")
+            await pilot.pause(delay=0.3)
+
+    mock_save.assert_called_once_with("api-tok")
+
+
+# ─── Main UI action tests ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_save_button_calls_api_save():
@@ -215,7 +433,6 @@ async def test_new_game_button_calls_api_create():
             await pilot.pause(delay=0.2)
 
     mock_client.create_new_game.assert_called_once_with("TestWorld")
-
 
 
 @pytest.mark.asyncio

@@ -1,33 +1,35 @@
 """
 satisfactory_tab — Textual tab widget for the Satisfactory Dedicated Server.
 
-Replaces the generic ``GameTab`` for the Satisfactory driver.  Instead of
-managing one container per game, this tab talks to the Satisfactory HTTP API
-to display the running session, list saves, and trigger game-management actions.
+Replaces the generic ``GameTab`` for the Satisfactory driver.  The tab handles
+the full lifecycle — from first-time server setup through ongoing game
+management — without ever requiring the user to drop to a shell.
 
-Layout (when the API is reachable):
+Setup flow (no saved token)
+---------------------------
+On first launch the tab probes the server and shows the appropriate form:
+
+  * **Server offline** — start-container button + retry.
+  * **Server unclaimed** (fresh install) — name + optional admin password →
+    claims the server and generates a long-lived token automatically.
+  * **Server claimed, no admin password** — one-click token generation.
+  * **Server claimed with password** — password input → login → generate token.
+
+Main UI (token saved and valid)
+---------------------------------
+::
+
     ┌──────────────────────────────────────────────────────┐
     │  Server: ● Online   Session: MyFactory  Players: 2   │
-    │  ────────────────────────────────────────────────    │
+    │  ─────────────────────────────────────────────────   │
     │  ▸ MyFactory   2026-03-22  3h 12m  [Load]            │
     │  ▸ OldBase     2026-03-10  8h 45m  [Load]            │
     │                                                      │
     │  [Save]  New game: [____________]  [Start]  [Rebuild] │
     └──────────────────────────────────────────────────────┘
-
-When no API token is configured:
-    ┌──────────────────────────────────────────────────────┐
-    │  ⚠ No API token configured.                          │
-    │  Run  server.GenerateAPIToken  in the server console │
-    │  Paste token: [________________________]  [Save]     │
-    └──────────────────────────────────────────────────────┘
-
-When the server container is offline:
-    │  Server: ○ Offline   [Start container]               │
 """
 from __future__ import annotations
 
-import datetime
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer, Horizontal, Vertical
 from textual.message import Message
@@ -81,19 +83,21 @@ class SatisfactoryTab(Widget):
     lifecycle (start, rebuild).
     """
 
+    class LoadSave(Message):
+        """Posted by ``SaveRow`` when the user clicks [Load]."""
+        def __init__(self, save_name: str) -> None:
+            super().__init__()
+            self.save_name = save_name
+
     DEFAULT_CSS = """
     SatisfactoryTab { height: 1fr; }
     #sat-save-list { height: 1fr; }
     #sat-status-bar { height: auto; }
     #sat-actions { height: auto; }
     #sat-newgame-input { width: 20; }
+    #sat-setup { padding: 1 2; height: auto; }
+    #sat-setup-form { height: auto; margin-top: 1; }
     """
-
-    class LoadSave(Message):
-        """Posted by ``SaveRow`` when the user clicks [Load]."""
-        def __init__(self, save_name: str) -> None:
-            super().__init__()
-            self.save_name = save_name
 
     _online: bool = reactive(False, init=False)
     _session: str = reactive("", init=False)
@@ -106,20 +110,24 @@ class SatisfactoryTab(Widget):
         self._game_driver = driver
         self._all_drivers = all_drivers or []
         self._client: SatisfactoryAPIClient | None = None
+        # Carries state between the setup worker and UI callbacks.
+        self._setup_state: dict = {}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _get_port(self) -> int:
+        """Return the game port from the driver, or fall back to 7777."""
+        if self._game_driver:
+            games = list(self._game_driver.games.values()) if self._game_driver.games else []
+            if games:
+                return games[0].game_port
+        return 7777
 
     def _build_client(self) -> SatisfactoryAPIClient | None:
         token = load_token()
         if not token:
             return None
-        port = 7777
-        if self._game_driver:
-            # Use the port of the running container if available
-            games = list(self._game_driver.games.values()) if self._game_driver.games else []
-            if games:
-                port = games[0].game_port
-        return SatisfactoryAPIClient(host="localhost", port=port, token=token)
+        return SatisfactoryAPIClient(host="localhost", port=self._get_port(), token=token)
 
     def _container_running(self) -> bool:
         """Return True if the Satisfactory container is running."""
@@ -142,23 +150,17 @@ class SatisfactoryTab(Widget):
         yield from self._compose_main()
 
     def _compose_setup(self) -> ComposeResult:
-        """Render the 'no token configured' setup screen."""
+        """Initial setup screen — content is filled in by the background worker."""
         with Vertical(id="sat-setup"):
-            yield Label("⚠ No API token configured.", id="sat-setup-warn")
-            yield Label(
-                "Generate one in the server console:  server.GenerateAPIToken",
-                id="sat-setup-hint",
-            )
-            with Horizontal(id="sat-setup-row"):
-                yield Input(placeholder="Paste token here", id="sat-token-input")
-                yield Button("Save token", id="sat-token-save", variant="primary")
+            yield Label("Checking server status…", id="sat-setup-status")
+            yield Vertical(id="sat-setup-form")
 
     def _compose_main(self) -> ComposeResult:
         """Render the main server management UI."""
         yield Horizontal(id="sat-status-bar")
         yield Rule()
         with ScrollableContainer(id="sat-save-list"):
-            pass  # populated by refresh()
+            pass  # populated by _do_refresh
         yield Rule()
         with Horizontal(id="sat-actions"):
             yield Button("Save", id="sat-save-btn", variant="success")
@@ -173,6 +175,8 @@ class SatisfactoryTab(Widget):
         if self._token_configured:
             self._client = self._build_client()
             self.run_worker(self._do_refresh, thread=True, exit_on_error=False)
+        else:
+            self.run_worker(self._do_setup_check, thread=True, exit_on_error=False)
 
     def poll(self) -> None:
         """Called by ``ControlServer.refresh_all()`` every 5 seconds."""
@@ -181,6 +185,185 @@ class SatisfactoryTab(Widget):
         if self._client is None:
             self._client = self._build_client()
         self.run_worker(self._do_refresh, thread=True, exit_on_error=False)
+
+    # ── Setup worker + UI callbacks ───────────────────────────────────────────
+
+    def _do_setup_check(self) -> None:
+        """
+        Background worker: probe the server and decide which setup form to show.
+
+        Possible outcomes:
+        - Server unreachable → show offline form
+        - Passwordless login succeeds + no server name → unclaimed → claim form
+        - Passwordless login succeeds + server name → no-password server → one-click
+        - Passwordless login fails → needs admin password → password form
+        """
+        client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
+        if not client.health_check():
+            self.app.call_from_thread(self._show_setup_offline)
+            return
+
+        server_name = client.get_server_name()
+        try:
+            initial_token = client.passwordless_login()
+            # Passwordless login worked — no admin password is set.
+            self._setup_state["initial_token"] = initial_token
+            if not server_name:
+                # No custom name → server is unclaimed (fresh install).
+                self.app.call_from_thread(self._show_setup_unclaimed)
+            else:
+                # Server has a name but no admin password.
+                self.app.call_from_thread(self._show_setup_no_password, server_name)
+        except Exception:
+            # Passwordless login failed — admin password is set.
+            self.app.call_from_thread(self._show_setup_need_password)
+
+    def _update_setup_status(self, text: str) -> None:
+        try:
+            self.query_one("#sat-setup-status", Label).update(text)
+        except Exception:
+            pass
+
+    def _replace_setup_form(self, *widgets) -> None:
+        """Replace the contents of #sat-setup-form with *widgets*."""
+        try:
+            form = self.query_one("#sat-setup-form", Vertical)
+            form.remove_children()
+            for w in widgets:
+                form.mount(w)
+        except Exception:
+            pass
+
+    def _show_setup_offline(self) -> None:
+        self._update_setup_status("○ Server not reachable at localhost:7777")
+        self._setup_state["mode"] = "offline"
+        widgets = []
+        if self._game_driver:
+            widgets.append(Button("Start container", id="sat-start-btn", variant="success"))
+        widgets.append(Button("Retry", id="sat-setup-retry", variant="default"))
+        self._replace_setup_form(*widgets)
+
+    def _show_setup_unclaimed(self) -> None:
+        self._update_setup_status("● Server online — not yet claimed")
+        self._setup_state["mode"] = "claim"
+        self._replace_setup_form(
+            Label("Server name:"),
+            Input(placeholder="My Factory", id="sat-claim-name"),
+            Label("Admin password (leave blank for none):"),
+            Input(placeholder="(optional)", password=True, id="sat-claim-password"),
+            Button("Claim server & generate token", id="sat-setup-submit", variant="primary"),
+        )
+
+    def _show_setup_no_password(self, server_name: str) -> None:
+        self._update_setup_status(f"● Server online — {server_name}")
+        self._setup_state["mode"] = "generate"
+        self._replace_setup_form(
+            Label("Server has no admin password — click to generate a token:"),
+            Button("Generate & save API token", id="sat-setup-submit", variant="primary"),
+        )
+
+    def _show_setup_need_password(self) -> None:
+        self._update_setup_status("● Server online — enter admin password to generate token")
+        self._setup_state["mode"] = "password"
+        self._replace_setup_form(
+            Label("Admin password:"),
+            Input(placeholder="Admin password", password=True, id="sat-auth-password"),
+            Button("Login & generate token", id="sat-setup-submit", variant="primary"),
+        )
+
+    # ── Setup button handlers ─────────────────────────────────────────────────
+
+    @on(Button.Pressed, "#sat-setup-retry")
+    def setup_retry(self, event: Button.Pressed) -> None:
+        """Re-run the server probe."""
+        self._update_setup_status("Checking server status…")
+        self._replace_setup_form()
+        self.run_worker(self._do_setup_check, thread=True, exit_on_error=False)
+
+    @on(Button.Pressed, "#sat-setup-submit")
+    def setup_submit(self, event: Button.Pressed) -> None:
+        """Dispatch to the correct worker based on the current setup mode."""
+        mode = self._setup_state.get("mode")
+        if mode == "claim":
+            self._start_claim()
+        elif mode == "generate":
+            token = self._setup_state.get("initial_token", "")
+            self.run_worker(
+                lambda: self._do_generate_token(token),
+                thread=True, exit_on_error=False,
+            )
+        elif mode == "password":
+            self._start_password_login()
+
+    def _start_claim(self) -> None:
+        try:
+            name = self.query_one("#sat-claim-name", Input).value.strip()
+            password = self.query_one("#sat-claim-password", Input).value.strip()
+        except Exception:
+            return
+        if not name:
+            self.app.notify("Enter a server name", severity="error")
+            return
+        token = self._setup_state.get("initial_token", "")
+        self.run_worker(
+            lambda: self._do_claim(name, password, token),
+            thread=True, exit_on_error=False,
+        )
+
+    def _start_password_login(self) -> None:
+        try:
+            password = self.query_one("#sat-auth-password", Input).value.strip()
+        except Exception:
+            return
+        self.run_worker(
+            lambda: self._do_password_login(password),
+            thread=True, exit_on_error=False,
+        )
+
+    # ── Setup background workers ──────────────────────────────────────────────
+
+    def _do_claim(self, server_name: str, admin_password: str, auth_token: str) -> None:
+        try:
+            client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
+            new_token = client.claim_server(server_name, admin_password, auth_token)
+            api_token = client.generate_api_token(new_token)
+            save_token(api_token)
+            self.app.call_from_thread(self._finish_setup)
+        except Exception as e:
+            self.app.notify(f"Claim failed: {e}", severity="error", title="Setup error")
+
+    def _do_generate_token(self, auth_token: str) -> None:
+        try:
+            client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
+            api_token = client.generate_api_token(auth_token)
+            save_token(api_token)
+            self.app.call_from_thread(self._finish_setup)
+        except Exception as e:
+            self.app.notify(f"Token generation failed: {e}", severity="error", title="Setup error")
+
+    def _do_password_login(self, password: str) -> None:
+        try:
+            client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
+            auth_token = client.password_login(password)
+            api_token = client.generate_api_token(auth_token)
+            save_token(api_token)
+            self.app.call_from_thread(self._finish_setup)
+        except Exception as e:
+            self.app.notify(f"Login failed: {e}", severity="error", title="Setup error")
+
+    def _finish_setup(self) -> None:
+        """Token saved — remount this widget as the main UI."""
+        self.app.notify("Token saved! Connecting to server…", title="Setup complete")
+        parent = self.parent
+        self.remove()
+        if parent is not None:
+            parent.mount(SatisfactoryTab(
+                driver=self._game_driver,
+                all_drivers=self._all_drivers,
+                id=self.id,
+            ))
+
+    # ── Main refresh worker ───────────────────────────────────────────────────
 
     def _do_refresh(self) -> None:
         """Background worker: query API and update reactive state."""
@@ -244,22 +427,6 @@ class SatisfactoryTab(Widget):
             container.mount(SaveRow(save, id=f"saverow-{save['saveName']}"))
 
     # ── Event handlers ────────────────────────────────────────────────────────
-
-    @on(Button.Pressed, "#sat-token-save")
-    def save_token_pressed(self, event: Button.Pressed) -> None:
-        inp = self.query_one("#sat-token-input", Input)
-        token = inp.value.strip()
-        if not token:
-            self.app.notify("Token cannot be empty", severity="error")
-            return
-        save_token(token)
-        self.app.notify("Token saved. Reloading tab…", title="API token")
-        # Remount this widget with the token now available
-        self.remove()
-        from satisfactory_tab import SatisfactoryTab
-        parent = self.parent
-        if parent is not None:
-            parent.mount(SatisfactoryTab(driver=self._game_driver, all_drivers=self._all_drivers))
 
     @on(Button.Pressed, "#sat-start-btn")
     def start_container(self, event: Button.Pressed) -> None:
