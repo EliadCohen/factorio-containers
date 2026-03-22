@@ -632,7 +632,16 @@ class ControlServer(App):
             self.factorio_driver.update_game_list()
 
 
+app = ControlServer  # exposed so `textual run --dev server_control.py` can find the App
+
+
 def main():
+    import sys
+    if "--dev" in sys.argv:
+        import subprocess
+        sys.exit(subprocess.run(
+            [sys.executable, "-m", "textual", "run", "--dev", __file__]
+        ).returncode)
     ControlServer().run()
 
 
