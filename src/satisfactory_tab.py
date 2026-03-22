@@ -106,6 +106,7 @@ class SatisfactoryTab(Widget):
     #sat-newgame-input { width: 20; }
     #sat-setup { padding: 1 2; height: auto; }
     #sat-setup-form { height: auto; margin-top: 1; }
+    #sat-status-bar-start { display: none; }
     """
 
     _online: bool = reactive(False, init=False)
@@ -121,6 +122,8 @@ class SatisfactoryTab(Widget):
         self._client: SatisfactoryAPIClient | None = None
         # Carries state between the setup worker and UI callbacks.
         self._setup_state: dict = {}
+        # Guard to prevent concurrent _do_refresh workers from racing on DOM updates.
+        self._refreshing: bool = False
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -166,7 +169,18 @@ class SatisfactoryTab(Widget):
 
     def _compose_main(self) -> ComposeResult:
         """Render the main server management UI."""
-        yield Horizontal(id="sat-status-bar")
+        with Horizontal(id="sat-status-bar"):
+            # Fixed labels — updated in-place by _render_status_bar to avoid
+            # async remove_children / mount races that cause duplicate-ID errors.
+            yield Label("", id="sat-status-label")
+            yield Label("", id="sat-session-label")
+            yield Label("", id="sat-players-label")
+            yield Button(
+                "Start container",
+                id="sat-status-bar-start",
+                classes="sat-start-btn",
+                variant="success",
+            )
         yield Rule()
         with ScrollableContainer(id="sat-save-list"):
             pass  # populated by _do_refresh
@@ -381,21 +395,32 @@ class SatisfactoryTab(Widget):
     # ── Main refresh worker ───────────────────────────────────────────────────
 
     def _do_refresh(self) -> None:
-        """Background worker: query API and update reactive state."""
-        if self._client is None:
-            self.app.call_from_thread(self._set_offline)
+        """Background worker: query API and update reactive state.
+
+        The ``_refreshing`` flag ensures only one worker touches the DOM at a
+        time — prevents duplicate-ID errors when a slow poll overlaps with the
+        next 5-second tick.
+        """
+        if self._refreshing:
             return
-        online = self._client.health_check()
-        if not online:
-            self.app.call_from_thread(self._set_offline)
-            return
+        self._refreshing = True
         try:
-            state = self._client.query_server_state()
-            saves = self._client.enumerate_sessions()
-            self.app.call_from_thread(self._update_state, state, saves)
-        except Exception as e:
-            _log.exception("_do_refresh API error")
-            self.app.notify(f"Satisfactory API error: {e}", severity="warning")
+            if self._client is None:
+                self.app.call_from_thread(self._set_offline)
+                return
+            online = self._client.health_check()
+            if not online:
+                self.app.call_from_thread(self._set_offline)
+                return
+            try:
+                state = self._client.query_server_state()
+                saves = self._client.enumerate_sessions()
+                self.app.call_from_thread(self._update_state, state, saves)
+            except Exception as e:
+                _log.exception("_do_refresh API error")
+                self.app.notify(f"Satisfactory API error: {e}", severity="warning")
+        finally:
+            self._refreshing = False
 
     def _set_offline(self) -> None:
         self._online = False
@@ -415,25 +440,31 @@ class SatisfactoryTab(Widget):
     # ── UI updaters ───────────────────────────────────────────────────────────
 
     def _render_status_bar(self) -> None:
-        """Rebuild the status bar content to reflect current state."""
+        """Update status bar labels in-place (no remove/mount to avoid async races)."""
         try:
-            bar = self.query_one("#sat-status-bar", Horizontal)
+            status_lbl = self.query_one("#sat-status-label", Label)
+            session_lbl = self.query_one("#sat-session-label", Label)
+            players_lbl = self.query_one("#sat-players-label", Label)
+            start_btn = self.query_one("#sat-status-bar-start", Button)
         except Exception:
-            _log.exception("_render_status_bar: could not find #sat-status-bar")
+            _log.exception("_render_status_bar: widget lookup failed")
             return
-        try:
-            bar.remove_children()
-            if self._online:
-                bar.mount(Label("● Online", classes="sat-online-label"))
-                bar.mount(Label(f"Session: {self._session or '—'}", classes="sat-session-label"))
-                bar.mount(Label(f"Players: {self._players}", classes="sat-players-label"))
-            else:
-                bar.mount(Label("○ Offline", classes="sat-offline-label"))
-                running = self._container_running()
-                if not running:
-                    bar.mount(Button("Start container", classes="sat-start-btn", variant="success"))
-        except Exception:
-            _log.exception("_render_status_bar: error rebuilding status bar")
+
+        if self._online:
+            status_lbl.update("● Online")
+            status_lbl.set_classes("sat-online-label")
+            session_lbl.update(f"Session: {self._session or '—'}")
+            session_lbl.display = True
+            players_lbl.update(f"Players: {self._players}")
+            players_lbl.display = True
+            start_btn.display = False
+        else:
+            status_lbl.update("○ Offline")
+            status_lbl.set_classes("sat-offline-label")
+            session_lbl.display = False
+            players_lbl.display = False
+            running = self._container_running()
+            start_btn.display = not running
 
     def _render_save_list(self) -> None:
         """Rebuild the scrollable save list from ``self._saves``."""
