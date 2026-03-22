@@ -32,19 +32,22 @@ def test_client_health_check_failure():
         assert client.health_check() is False
 
 
-def test_client_get_server_name_returns_name():
-    client = _make_client()
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"data": {"serverCustomName": "MyServer"}}
-    with patch.object(client._session, "post", return_value=resp):
-        assert client.get_server_name() == "MyServer"
+def test_decode_privilege_level_initial_admin():
+    """InitialAdmin token (unclaimed server) must decode correctly."""
+    # Real token from passwordless login on unclaimed server
+    token = "ewoJInBsIjogIkluaXRpYWxBZG1pbiIKfQ==.sig"
+    assert SatisfactoryAPIClient.decode_privilege_level(token) == "InitialAdmin"
 
 
-def test_client_get_server_name_returns_empty_on_error():
-    client = _make_client()
-    with patch.object(client._session, "post", side_effect=Exception("refused")):
-        assert client.get_server_name() == ""
+def test_decode_privilege_level_administrator():
+    """Administrator token (claimed server, no password) must decode correctly."""
+    token = "ewoJInBsIjogIkFkbWluaXN0cmF0b3IiCn0=.sig"
+    assert SatisfactoryAPIClient.decode_privilege_level(token) == "Administrator"
+
+
+def test_decode_privilege_level_bad_token():
+    """Malformed token must return empty string without raising."""
+    assert SatisfactoryAPIClient.decode_privilege_level("notavalidtoken") == ""
 
 
 def test_client_query_server_state():
@@ -193,21 +196,28 @@ def test_client_claim_server_sends_name_and_password():
 
 
 def test_client_generate_api_token_returns_token():
+    """generate_api_token must parse the token out of the RunCommand response."""
     client = SatisfactoryAPIClient(host="localhost", port=7777)
+    cmd_result = "New Server API Authentication Token: long-lived-tok\n"
     with patch.object(client._session, "post",
-                      return_value=_resp(200, {"data": {"token": "long-lived-tok"}})):
+                      return_value=_resp(200, {"data": {"commandResult": cmd_result,
+                                                        "returnValue": True}})):
         assert client.generate_api_token("auth-tok") == "long-lived-tok"
 
 
-def test_client_generate_api_token_uses_auth_override():
-    """generate_api_token must send the provided auth_token, not the stored one."""
+def test_client_generate_api_token_uses_run_command():
+    """generate_api_token must call RunCommand with server.GenerateAPIToken."""
     client = SatisfactoryAPIClient(host="localhost", port=7777, token="stored-tok")
     captured = {}
     def fake_post(url, **kwargs):
+        captured["body"] = kwargs.get("json")
         captured["headers"] = kwargs.get("headers") or {}
-        return _resp(200, {"data": {"token": "new-tok"}})
+        return _resp(200, {"data": {"commandResult": "New Server API Authentication Token: tok\n",
+                                    "returnValue": True}})
     with patch.object(client._session, "post", side_effect=fake_post):
         client.generate_api_token("temp-tok")
+    assert captured["body"]["function"] == "RunCommand"
+    assert captured["body"]["data"]["Command"] == "server.GenerateAPIToken"
     assert "temp-tok" in captured["headers"].get("Authorization", "")
 
 
@@ -290,12 +300,14 @@ async def test_setup_shows_offline_form_when_server_unreachable():
 
 @pytest.mark.asyncio
 async def test_setup_shows_claim_form_when_unclaimed():
-    """An unclaimed server (no server name) must show the claim form."""
+    """An unclaimed server (InitialAdmin token) must show the claim form."""
+    # InitialAdmin token (base64 of {"pl": "InitialAdmin"})
+    initial_admin_token = "ewoJInBsIjogIkluaXRpYWxBZG1pbiIKfQ==.sig"
     with patch("satisfactory_tab.load_token", return_value=None), \
          patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
         MockClient.return_value.health_check.return_value = True
-        MockClient.return_value.get_server_name.return_value = ""
-        MockClient.return_value.passwordless_login.return_value = "tmp-tok"
+        MockClient.return_value.passwordless_login.return_value = initial_admin_token
+        MockClient.decode_privilege_level = SatisfactoryAPIClient.decode_privilege_level
 
         async with _TabApp().run_test() as pilot:
             await pilot.pause(delay=0.3)
@@ -305,18 +317,20 @@ async def test_setup_shows_claim_form_when_unclaimed():
 
 @pytest.mark.asyncio
 async def test_setup_shows_generate_button_when_no_password():
-    """A claimed server with no admin password must show one-click token generation."""
+    """A claimed server with no admin password (Administrator token) shows one-click generation."""
+    # Administrator token (base64 of {"pl": "Administrator"})
+    admin_token = "ewoJInBsIjogIkFkbWluaXN0cmF0b3IiCn0=.sig"
     with patch("satisfactory_tab.load_token", return_value=None), \
          patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
         MockClient.return_value.health_check.return_value = True
-        MockClient.return_value.get_server_name.return_value = "MyServer"
-        MockClient.return_value.passwordless_login.return_value = "tmp-tok"
+        MockClient.return_value.passwordless_login.return_value = admin_token
+        MockClient.decode_privilege_level = SatisfactoryAPIClient.decode_privilege_level
 
         async with _TabApp().run_test() as pilot:
             await pilot.pause(delay=0.3)
             submit = pilot.app.query_one("#sat-setup-submit")
             assert submit is not None
-            # Claim form must NOT be shown (server already has a name)
+            # Claim form must NOT be shown
             assert len(list(pilot.app.query("#sat-claim-name"))) == 0
 
 
@@ -327,7 +341,6 @@ async def test_setup_shows_password_form_when_server_has_password():
     with patch("satisfactory_tab.load_token", return_value=None), \
          patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient:
         MockClient.return_value.health_check.return_value = True
-        MockClient.return_value.get_server_name.return_value = "MyServer"
         MockClient.return_value.passwordless_login.side_effect = SatisfactoryAPIError("401")
 
         async with _TabApp().run_test() as pilot:
@@ -339,16 +352,17 @@ async def test_setup_shows_password_form_when_server_has_password():
 @pytest.mark.asyncio
 async def test_claim_flow_saves_token_and_reloads():
     """Submitting the claim form must call claim_server + generate_api_token and save."""
+    initial_admin_token = "ewoJInBsIjogIkluaXRpYWxBZG1pbiIKfQ==.sig"
     with patch("satisfactory_tab.load_token", return_value=None), \
          patch("satisfactory_tab.SatisfactoryAPIClient") as MockClient, \
          patch("satisfactory_tab.save_token") as mock_save, \
          patch.object(SatisfactoryTab, "_finish_setup", lambda self: None):
         inst = MockClient.return_value
         inst.health_check.return_value = True
-        inst.get_server_name.return_value = ""
-        inst.passwordless_login.return_value = "tmp-tok"
+        inst.passwordless_login.return_value = initial_admin_token
         inst.claim_server.return_value = "claimed-tok"
         inst.generate_api_token.return_value = "api-tok"
+        MockClient.decode_privilege_level = SatisfactoryAPIClient.decode_privilege_level
 
         async with _TabApp().run_test(size=(120, 40)) as pilot:
             await pilot.pause(delay=0.3)  # let setup check finish

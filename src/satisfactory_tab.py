@@ -194,26 +194,28 @@ class SatisfactoryTab(Widget):
 
         Possible outcomes:
         - Server unreachable → show offline form
-        - Passwordless login succeeds + no server name → unclaimed → claim form
-        - Passwordless login succeeds + server name → no-password server → one-click
+        - Passwordless login returns InitialAdmin token → unclaimed → claim form
+        - Passwordless login returns Administrator token → claimed, no password → one-click
         - Passwordless login fails → needs admin password → password form
+
+        Claimed vs unclaimed is detected by decoding the privilege level from
+        the returned token: InitialAdmin = unclaimed, Administrator = claimed.
         """
         client = SatisfactoryAPIClient(host="localhost", port=self._get_port())
         if not client.health_check():
             self.app.call_from_thread(self._show_setup_offline)
             return
 
-        server_name = client.get_server_name()
         try:
             initial_token = client.passwordless_login()
-            # Passwordless login worked — no admin password is set.
             self._setup_state["initial_token"] = initial_token
-            if not server_name:
-                # No custom name → server is unclaimed (fresh install).
+            level = SatisfactoryAPIClient.decode_privilege_level(initial_token)
+            if level == "InitialAdmin":
+                # Server is unclaimed (fresh install).
                 self.app.call_from_thread(self._show_setup_unclaimed)
             else:
-                # Server has a name but no admin password.
-                self.app.call_from_thread(self._show_setup_no_password, server_name)
+                # Server is claimed but has no admin password.
+                self.app.call_from_thread(self._show_setup_no_password)
         except Exception:
             # Passwordless login failed — admin password is set.
             self.app.call_from_thread(self._show_setup_need_password)
@@ -254,8 +256,8 @@ class SatisfactoryTab(Widget):
             Button("Claim server & generate token", id="sat-setup-submit", variant="primary"),
         )
 
-    def _show_setup_no_password(self, server_name: str) -> None:
-        self._update_setup_status(f"● Server online — {server_name}")
+    def _show_setup_no_password(self) -> None:
+        self._update_setup_status("● Server online — no admin password set")
         self._setup_state["mode"] = "generate"
         self._replace_setup_form(
             Label("Server has no admin password — click to generate a token:"),
@@ -430,14 +432,26 @@ class SatisfactoryTab(Widget):
 
     @on(Button.Pressed, "#sat-start-btn")
     def start_container(self, event: Button.Pressed) -> None:
-        """Start the Satisfactory container via the Podman driver."""
+        """Start (or create-and-start) the Satisfactory container via the Podman driver."""
         if not self._game_driver:
             return
+        self.run_worker(self._do_start_container, thread=True, exit_on_error=False)
+
+    def _do_start_container(self) -> None:
         try:
+            self._game_driver.update_game_list()
             games = list(self._game_driver.games.values())
             if games:
                 games[0].start()
-            self.app.notify("Starting Satisfactory container…", title="Container")
+                self.app.notify("Starting Satisfactory container…", title="Container")
+            else:
+                # No container exists yet — create one with defaults.
+                port = self._get_port()
+                self._game_driver.create_game(name="server", port=port)
+                self.app.notify(
+                    "Satisfactory container created and started.",
+                    title="Container",
+                )
         except Exception as e:
             self.app.notify(f"Failed to start container: {e}", severity="error")
 

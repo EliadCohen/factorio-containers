@@ -142,25 +142,29 @@ class SatisfactoryAPIClient:
         except Exception:
             return False
 
-    def get_server_name(self) -> str:
+    @staticmethod
+    def decode_privilege_level(token: str) -> str:
         """
-        Return the server's custom name from ``HealthCheck``.
+        Decode the privilege level embedded in a Satisfactory auth token.
 
-        Returns an empty string if the server is unreachable or unclaimed.
-        No auth required.
+        Tokens are ``base64({"pl": "<Level>"}).<signature>``.  The privilege
+        hierarchy is (lowest → highest):
+        ``NotAuthenticated`` → ``Client`` → ``Administrator`` →
+        ``InitialAdmin`` → ``APIToken``.
+
+        ``InitialAdmin`` is granted on an unclaimed server; ``Administrator``
+        is granted by ``PasswordlessLogin`` on a claimed server with no
+        admin password.
+
+        Returns an empty string on any decode error.
         """
+        import base64, json
         try:
-            resp = self._session.post(
-                self._base,
-                params={"function": "HealthCheck"},
-                json={"function": "HealthCheck", "data": {"clientCustomData": ""}},
-                timeout=3,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("data", {}).get("serverCustomName", "")
+            b64 = token.split(".")[0]
+            b64 += "=" * (-len(b64) % 4)  # re-pad
+            return json.loads(base64.b64decode(b64)).get("pl", "")
         except Exception:
-            pass
-        return ""
+            return ""
 
     # ── Game state (requires valid API token) ─────────────────────────────────
 
@@ -278,14 +282,35 @@ class SatisfactoryAPIClient:
 
     def generate_api_token(self, auth_token: str) -> str:
         """
-        Generate a long-lived API token.
+        Generate a long-lived API token via the ``RunCommand`` endpoint.
+
+        ``GenerateAPIToken`` is a server console command, not an HTTPS API
+        function.  The API equivalent is ``RunCommand`` with
+        ``"Command": "server.GenerateAPIToken"``, which requires
+        ``Administrator``-level auth.
 
         Args:
-            auth_token: An ``InitialAdmin``-level token from ``passwordless_login()``,
-                        ``password_login()``, or ``claim_server()``.
+            auth_token: An ``Administrator``-level token from
+                        ``passwordless_login()``, ``password_login()``, or
+                        ``claim_server()``.
 
         Returns:
-            The long-lived API token string (also write it with ``save_token()``).
+            The long-lived API token string. Persist it with ``save_token()``.
+
+        Raises:
+            SatisfactoryAPIError: If the command fails or the token cannot be
+                parsed from the response.
         """
-        data = self._post("GenerateAPIToken", {}, auth_token=auth_token)
-        return data["token"]
+        data = self._post(
+            "RunCommand",
+            {"Command": "server.GenerateAPIToken"},
+            auth_token=auth_token,
+        )
+        result = data.get("commandResult", "")
+        # Response format: "New Server API Authentication Token: <token>\n"
+        prefix = "New Server API Authentication Token: "
+        if prefix in result:
+            return result.split(prefix, 1)[1].strip()
+        raise SatisfactoryAPIError(
+            f"Could not parse API token from RunCommand response: {result!r}"
+        )
