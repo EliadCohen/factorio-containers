@@ -19,7 +19,7 @@ from textual.widgets import (
     Input, Switch, Label, DirectoryTree, Button, Header, Footer, Rule,
     TabbedContent, TabPane,
 )
-from textual.containers import ScrollableContainer, HorizontalGroup
+from textual.containers import ScrollableContainer, HorizontalGroup, Horizontal, Vertical
 from textual.app import App
 from textual.containers import ItemGrid
 from textual.widget import Widget
@@ -464,25 +464,26 @@ class GameTab(Widget):
         """
         prefix = self._driver.game_prefix.rstrip("-")
         self._driver.update_game_list()
-        with ScrollableContainer(id=f"server_container-{prefix}"):
-            for game in self._driver.games.values():
-                if self._driver.supports_player_count() and game.active_status:
-                    pc = game.player_count()
-                    count = pc if pc is not None else -1
-                else:
-                    count = -1
-                yield ServerEntry(
-                    game_name=game.game_name,
-                    game_port=game.game_port,
-                    game_active=game.active_status,
-                    player_count=count,
-                    driver=self._driver,
-                    id=f"server-{game.game_name}",
-                )
-        yield Rule()
-        yield UpdateSection(driver=self._driver, id="updatesection")
-        yield Rule()
-        yield NewServer(driver=self._driver, all_drivers=self._all_drivers, id="newserver")
+        with Horizontal():
+            with Vertical(id="left-panel"):
+                with ScrollableContainer(id=f"server_container-{prefix}"):
+                    for game in self._driver.games.values():
+                        if self._driver.supports_player_count() and game.active_status:
+                            pc = game.player_count()
+                            count = pc if pc is not None else -1
+                        else:
+                            count = -1
+                        yield ServerEntry(
+                            game_name=game.game_name,
+                            game_port=game.game_port,
+                            game_active=game.active_status,
+                            player_count=count,
+                            driver=self._driver,
+                            id=f"server-{game.game_name}",
+                        )
+                yield Rule()
+                yield UpdateSection(driver=self._driver, id="updatesection")
+            yield NewServer(driver=self._driver, all_drivers=self._all_drivers, id="newserver")
 
     def refresh_game_list(self):
         """

@@ -18,8 +18,23 @@ TabPane {
     height: 1fr;
 }
 
-GameTab > ScrollableContainer {
-    height: 28;
+GameTab > Horizontal {
+    height: 1fr;
+}
+
+#left-panel {
+    width: 1fr;
+    height: 1fr;
+}
+
+#left-panel > ScrollableContainer {
+    height: 1fr;
+}
+
+#newserver {
+    width: 50;
+    height: 1fr;
+    border-left: solid $panel;
 }
 
 #port_selection {
