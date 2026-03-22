@@ -188,6 +188,11 @@ class SatisfactoryServer(GameDriver):
         """
         return False
 
+    def create_tab(self, all_drivers: list):
+        """Return a ``SatisfactoryTab`` instead of the generic ``GameTab``."""
+        from satisfactory_tab import SatisfactoryTab
+        return SatisfactoryTab(driver=self, all_drivers=all_drivers)
+
     # ── constructor ────────────────────────────────────────────────────────────
 
     def __init__(self):

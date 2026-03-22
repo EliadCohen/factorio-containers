@@ -202,6 +202,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "podman" },
+    { name = "requests" },
     { name = "textual" },
 ]
 
@@ -219,6 +220,7 @@ requires-dist = [
     { name = "podman", specifier = ">=5.4.0.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "textual", specifier = ">=2.1.0" },
     { name = "textual-dev", marker = "extra == 'dev'" },
 ]

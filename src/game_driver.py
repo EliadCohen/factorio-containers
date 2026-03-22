@@ -86,3 +86,13 @@ class GameDriver(ABC):
     def supports_save_picker(self) -> bool:
         """Whether the creation form should show a save file picker."""
         return True
+
+    def create_tab(self, all_drivers: list) -> Any:
+        """
+        Return the Textual widget to use as this driver's tab content.
+
+        The default returns a generic ``GameTab``.  Override to return a
+        custom widget (e.g. ``SatisfactoryTab`` for the Satisfactory driver).
+        """
+        from server_control import GameTab
+        return GameTab(driver=self, all_drivers=all_drivers)

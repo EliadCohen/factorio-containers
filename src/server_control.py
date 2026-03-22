@@ -614,7 +614,7 @@ class ControlServer(App):
         with TabbedContent():
             for driver in self.all_drivers:
                 with TabPane(driver.display_name):
-                    yield GameTab(driver=driver, all_drivers=self.all_drivers)
+                    yield driver.create_tab(all_drivers=self.all_drivers)
         yield Footer()
 
     def on_mount(self):
@@ -622,9 +622,16 @@ class ControlServer(App):
         self.set_interval(5, self.refresh_all)
 
     def refresh_all(self):
-        """Refresh every ``GameTab`` from its driver's live Podman state."""
+        """Refresh every tab from its driver's live state."""
         for tab in self.query(GameTab):
             tab.refresh_game_list()
+        # SatisfactoryTab (if present) has its own refresh() method.
+        try:
+            from satisfactory_tab import SatisfactoryTab
+            for tab in self.query(SatisfactoryTab):
+                tab.poll()
+        except ImportError:
+            pass
 
     def action_refresh(self):
         """Manually refresh all tabs (bound to ``r``)."""

@@ -53,6 +53,7 @@ def _mock_driver(games=None, game_prefix="factorio-", display_name="Factorio",
         supports_player_count (bool): Whether the driver reports player counts.
         supports_save_picker (bool): Whether new-server uses file picker.
     """
+    from server_control import GameTab
     d = MagicMock()
     d.games = games or {}
     d.game_prefix = game_prefix
@@ -61,6 +62,7 @@ def _mock_driver(games=None, game_prefix="factorio-", display_name="Factorio",
     d.supports_player_count.return_value = supports_player_count
     d.supports_save_picker.return_value = supports_save_picker
     d.get_all_ports.return_value = {g.game_port for g in (games or {}).values()}
+    d.create_tab.side_effect = lambda all_drivers: GameTab(driver=d, all_drivers=all_drivers)
     return d
 
 

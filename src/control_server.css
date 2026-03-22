@@ -71,3 +71,108 @@ GameTab > ScrollableContainer {
     color: $warning;
     width: auto;
 }
+
+/* ── SatisfactoryTab ──────────────────────────────────────── */
+
+SatisfactoryTab {
+    height: 1fr;
+}
+
+#sat-setup {
+    padding: 2 4;
+    height: auto;
+}
+
+#sat-setup-warn {
+    color: $warning;
+}
+
+#sat-setup-hint {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#sat-setup-row {
+    height: auto;
+}
+
+#sat-token-input {
+    width: 1fr;
+}
+
+#sat-status-bar {
+    height: auto;
+    padding: 0 1;
+    background: $boost;
+}
+
+#sat-status-bar Label {
+    margin-right: 3;
+}
+
+#sat-online-label {
+    color: $success;
+}
+
+#sat-offline-label {
+    color: $error;
+}
+
+#sat-session-label {
+    color: $text;
+}
+
+#sat-players-label {
+    color: $text-muted;
+}
+
+#sat-save-list {
+    height: 1fr;
+}
+
+SaveRow {
+    height: auto;
+    padding: 0 1;
+}
+
+SaveRow Horizontal {
+    height: auto;
+}
+
+SaveRow .save-name {
+    width: 1fr;
+}
+
+SaveRow .save-date {
+    width: 12;
+    color: $text-muted;
+}
+
+SaveRow .save-duration {
+    width: 10;
+    color: $text-muted;
+}
+
+SaveRow .load-btn {
+    width: auto;
+    min-width: 0;
+}
+
+#sat-actions {
+    height: auto;
+    padding: 0 1;
+    border-top: solid $panel;
+}
+
+#sat-newgame-label {
+    margin: 1 1;
+}
+
+#sat-newgame-input {
+    width: 20;
+}
+
+#sat-rebuild-btn {
+    width: auto;
+    min-width: 0;
+}
