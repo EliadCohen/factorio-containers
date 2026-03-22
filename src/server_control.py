@@ -635,9 +635,10 @@ class ControlServer(App):
 def main():
     import sys
     if "--dev" in sys.argv:
-        import subprocess
+        import os, subprocess, shutil
+        textual = shutil.which("textual") or os.path.join(os.path.dirname(sys.executable), "textual")
         sys.exit(subprocess.run(
-            [sys.executable, "-m", "textual", "run", "--dev", "server_control:ControlServer"]
+            [textual, "run", "--dev", "server_control:ControlServer"]
         ).returncode)
     ControlServer().run()
 
